@@ -1,0 +1,12 @@
+.{
+    .name = .monolith,
+    .fingerprint = 0x44623535083de83a,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.2",
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+    },
+}
