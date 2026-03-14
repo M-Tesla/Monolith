@@ -203,6 +203,27 @@ This did not start clean. Early versions carried C dependencies for platform I/O
 
 **v0.14** sorted flush: dirty pages were written in hash-map iteration order (random). Sorting by pgno before writing turns random I/O into sequential I/O. One sort, real gain, especially on spinning disk.
 
+**v0.15** production hardening. A full audit of every file in the engine. Nine confirmed bugs, all fixed.
+
+`putNode` used `@panic` in four runtime conditions — key too long, page full, wrong page type, bad branch argument. Any of those would kill the process with no recovery path. The function signature changed from `*Node` to `!*Node`, returning typed errors. Every call site in the codebase was updated.
+
+`MmapRegion.sync()` returned `void` and discarded all I/O errors — `FlushViewOfFile` on Windows with `_ =`, `msync` on POSIX with `catch {}`. A committed transaction could believe it was durable when the disk had failed. The function now returns `!void` and the error propagates through `commit()`.
+
+`first_unallocated` is a `u32`. At `0xFFFFFFFF`, an unchecked increment would wrap to 0 and the engine would start allocating pages over the meta pages. Added an explicit guard before every allocation. The same check covers overflow page runs, where the addition `first_pgno + n_pages` could exceed 32 bits.
+
+Checksums were computed and written on every commit but never verified on read. A bit-flip, a partial write, memory corruption — all passed through undetected. Added `validatePageChecksum()` called in `getWritablePage()` when copying a page from the mmap. Skipped for nested transactions: pages from a parent's dirty list have not been flushed yet and carry no checksum.
+
+In exclusive mode, reader slot methods were walking a global `ReaderTable` via a raw pointer. Since exclusive mode is single-process by definition, reader tracking is not needed at all. All methods that touched `self.table` now return early when `exclusive = true`. The pointer is never accessed.
+
+`closeDBI` and the error paths in `openDbi` used `dbi_free_slots.append(...) catch {}`. An OOM failure there silently orphaned the slot. With enough open/close cycles under memory pressure, the environment would report `error.DbsFull` prematurely. Fixed with `ensureTotalCapacity(max_dbs)` at environment open time.
+
+DBI names longer than 255 bytes were silently truncated. Two DBIs whose names shared the first 255 characters would resolve to the same slot. Added explicit validation: `error.NameTooLong`.
+
+`tryAutoShrink` called `self.map.deinit()` before attempting the remap. If `MmapRegion.init()` failed, `self.map` pointed at an unmapped region. Platform-aware fix: on POSIX, the file can be truncated while the old mapping is alive, so the new mapping is obtained before releasing the old one (try-then-swap). On Windows, unmapping before truncating is required, so the original unmap-first sequence is kept but with a proper fallback that restores the file size if remap fails.
+
+`getPagePtr` had no bounds check. A corrupted pgno from a B-tree node would read beyond the mmap with no signal. Added `std.debug.assert` to catch the condition in debug and test builds. A `getPagePtrSafe()` variant returning `!*PageHeader` is available for callers that need explicit error handling.
+
+
 Throughout all of this, every feature shipped with tests. The test suite grew from a handful of sanity checks to 146 tests covering basic CRUD, splits, merges, overflow, dupsort, nested txns, GC recycling, MVCC isolation, crash safety, writemap, geometry, shrink, checksums, backup, compaction, and every flag combination that matters.
 
 ---
