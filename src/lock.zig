@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Marcelo Tesla
+//
+// This software is provided under the MIT License.
+// See the LICENSE file at the root of the project for the full text.
+//
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const os = @import("os/os.zig");
 const types = @import("core/types.zig");
@@ -15,27 +21,22 @@ pub const ReaderTable = extern struct {
     slots: [126]ReaderSlot, // Fit in 4KB roughly? 126 * 16 = 2016. Plenty of space.
 };
 
-/// Inline reader table used in exclusive mode (no .lck file).
-var exclusive_table: ReaderTable = std.mem.zeroes(ReaderTable);
-
 pub const LockManager = struct {
     file: std.fs.File,
     map: os.MmapRegion,
     table: *ReaderTable,
     allocator: std.mem.Allocator,
     /// When true all lock operations are no-ops (exclusive mode).
+    /// In exclusive mode, reader-slot methods return early without touching self.table.
     exclusive: bool = false,
 
     /// Returns a no-op LockManager for exclusive mode.
-    /// No .lck file is created; all lock operations succeed immediately.
+    /// No .lck file is created; all lock/reader operations succeed immediately.
     pub fn initExclusive() LockManager {
-        exclusive_table = std.mem.zeroes(ReaderTable);
-        exclusive_table.magic     = 0xBEEFDEAD;
-        exclusive_table.num_slots = 126;
         return LockManager{
             .file      = undefined,
             .map       = undefined,
-            .table     = &exclusive_table,
+            .table     = undefined, // never accessed in exclusive mode
             .allocator = undefined,
             .exclusive = true,
         };
@@ -98,6 +99,7 @@ pub const LockManager = struct {
     
     // Returns slot index
     pub fn registerReader(self: *LockManager, txnid: u64) !usize {
+        if (self.exclusive) return 0; // exclusive mode: single process, no slot needed
         if (try self.tryClaimSlot(txnid)) |idx| return idx;
         self.recoverDeadSlots();
         if (try self.tryClaimSlot(txnid)) |idx| return idx;
@@ -122,6 +124,7 @@ pub const LockManager = struct {
     }
     
     pub fn recoverDeadSlots(self: *LockManager) void {
+        if (self.exclusive) return;
         var i: usize = 0;
         while (i < self.table.num_slots) : (i += 1) {
             const slot = &self.table.slots[i];
@@ -141,12 +144,14 @@ pub const LockManager = struct {
     }
 
     pub fn unregisterReader(self: *LockManager, slot_idx: usize) void {
+        if (self.exclusive) return;
         if (slot_idx >= self.table.num_slots) return;
         const slot = &self.table.slots[slot_idx];
         @atomicStore(u64, &slot.txnid, 0, .release);
     }
     
     pub fn getOldestReader(self: *LockManager, limit_txnid: u64) u64 {
+        if (self.exclusive) return limit_txnid; // no readers in exclusive mode
         var min_txnid = limit_txnid;
         var i: usize = 0;
         
