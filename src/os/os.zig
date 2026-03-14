@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Marcelo Tesla
+//
+// This software is provided under the MIT License.
+// See the LICENSE file at the root of the project for the full text.
+//
+// SPDX-License-Identifier: MIT
 //! OS abstraction layer: memory-mapped files and process management.
 //! Supports Windows (Win32) and POSIX (Linux, macOS).
 
@@ -178,11 +184,11 @@ pub const MmapRegion = struct {
         }
     }
 
-    pub fn sync(self: *MmapRegion) void {
+    pub fn sync(self: *MmapRegion) !void {
         if (comptime is_windows) {
-            _ = FlushViewOfFile(self.ptr, self.len);
+            if (FlushViewOfFile(self.ptr, self.len) == 0) return error.SyncFailed;
         } else {
-            std.posix.msync(@alignCast(self.ptr[0..self.len]), std.posix.MSF.SYNC) catch {};
+            try std.posix.msync(@alignCast(self.ptr[0..self.len]), std.posix.MSF.SYNC);
         }
     }
 };
@@ -263,7 +269,7 @@ test "Mmap Basic" {
     const slice = region.ptr[0..region.len];
     slice[0]    = 0xAA;
     slice[4095] = 0xBB;
-    region.sync();
+    try region.sync();
     try file.seekTo(0);
     var buf: [1]u8 = undefined;
     _ = try file.read(&buf);
