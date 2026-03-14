@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Marcelo Tesla
+//
+// This software is provided under the MIT License.
+// See the LICENSE file at the root of the project for the full text.
+//
+// SPDX-License-Identifier: MIT
 //! Page Structures
 // Layouts based on monolith-internals.h
 
@@ -162,31 +168,31 @@ pub const PageHeader = extern struct {
     /// Assumes there is enough space (check with getFreeSpace).
     /// Returns error if it fails (but here we assume void and panic or caller check).
     /// Returns pointer to the written node.
-    pub fn putNode(self: *PageHeader, index: u16, key: []const u8, val: []const u8, flags: u8) *Node {
+    pub fn putNode(self: *PageHeader, index: u16, key: []const u8, val: []const u8, flags: u8) !*Node {
         // Assert NOT P_LEAF2 (DUPFIXED)
         // DUPFIXED pages use a flat array layout, not the slotted layout handled by putNode.
         if ((self.flags & P_LEAF2) != 0) {
-             @panic("putNode called on P_LEAF2 (DUPFIXED) page!");
+            return error.InvalidPageType;
         }
 
         // 1. Calculate node size
         // Node Header (8) + Key + Data
         var node_size: u32 = 8 + @as(u32, @truncate(key.len)) + @as(u32, @truncate(val.len));
-        
+
         if (key.len > 4000) {
-             std.debug.panic("putNode FATAL: key.len={d} exceeds limit", .{key.len});
+            return error.KeyTooLong;
         }
-        
+
         // Alignment to 2 bytes (word alignment)
         if (node_size % 2 != 0) node_size += 1;
-        
+
         // 2. Allocate space (from upper down)
         var upper = self.getUpper();
         const lower = self.getLower();
-        
+
         // Check space (needs node_size + 2 bytes for offset index)
         if (upper - lower < node_size + 2) {
-             std.debug.panic("PageFull! Pgno {d}, upper {d}, lower {d}, node_size {d}, entries {d}", .{self.pgno, upper, lower, node_size, self.getNumEntries()});
+            return error.PageFull;
         }
         
         upper -= @as(u16, @truncate(node_size));
@@ -200,7 +206,7 @@ pub const PageHeader = extern struct {
         
         if (is_branch) {
              // Branch: val holds child pgno
-             if (val.len != 4) @panic("Branch insert val must be 4 bytes (pgno)");
+             if (val.len != 4) return error.InvalidArgument;
              const child_pgno = std.mem.readInt(u32, val[0..4], .little);
              node.data_shim = child_pgno;
         } else {
@@ -244,7 +250,7 @@ pub const PageHeader = extern struct {
 
     /// Copies `count` nodes starting at `start_index` from this page into `dest_page`.
     /// `dest_page` is expected to be empty or in append-only mode.
-    pub fn copyNodes(self: *const PageHeader, dest_page: *PageHeader, start_index: u16, count: u16) void {
+    pub fn copyNodes(self: *const PageHeader, dest_page: *PageHeader, start_index: u16, count: u16) !void {
         var i: u16 = 0;
         while (i < count) : (i += 1) {
             const idx = start_index + i;
@@ -269,7 +275,7 @@ pub const PageHeader = extern struct {
                  val = node.getData();
              }
              
-             _ = dest_page.putNode(dest_idx, node.getKey(), val, node.flags);
+             _ = try dest_page.putNode(dest_idx, node.getKey(), val, node.flags);
          }
     }
     
@@ -447,6 +453,14 @@ pub fn computePageChecksum(page: *const PageHeader, page_size: usize) u16 {
     return @as(u16, @truncate(h ^ (h >> 16)));
 }
 
+/// Returns true if the page checksum matches the stored value.
+/// Always returns true for P_META and P_LEAF2 pages (they use dupfix_ksize for other purposes).
+pub fn validatePageChecksum(page: *const PageHeader, page_size: usize) bool {
+    if ((page.flags & P_META) != 0 or (page.flags & P_LEAF2) != 0) return true;
+    const expected = computePageChecksum(page, page_size);
+    return page.dupfix_ksize == expected;
+}
+
 test "PageHeader Size" {
     // 8 + 2 + 2 + 4 + 4 = 20 bytes
     try std.testing.expectEqual(@as(usize, 20), @sizeOf(PageHeader));
@@ -468,7 +482,7 @@ test "PageHeader Put/Search" {
     try std.testing.expectEqual(@as(u32, 4076), ptr.getFreeSpace());
     
     // Insert "key1" -> "val1" at index 0
-    _ = ptr.putNode(0, "key1", "val1", 0);
+    _ = try ptr.putNode(0, "key1", "val1", 0);
     
     // Verify
     try std.testing.expectEqual(@as(u16, 1), ptr.getNumEntries());
@@ -487,7 +501,7 @@ test "PageHeader Put/Search" {
     try std.testing.expectEqual(@as(u16, 1), res2.index);
     
     // Insert "key2" -> "val2" at index 1
-    _ = ptr.putNode(1, "key2", "val2", 0);
+    _ = try ptr.putNode(1, "key2", "val2", 0);
     
     // Verify order
     try std.testing.expectEqual(@as(u16, 2), ptr.getNumEntries());
@@ -495,7 +509,7 @@ test "PageHeader Put/Search" {
     try std.testing.expectEqualStrings("key2", n2.getKey());
     
     // Insert "key0" -> "val0" at index 0 (should shift others)
-    _ = ptr.putNode(0, "key0", "val0", 0);
+    _ = try ptr.putNode(0, "key0", "val0", 0);
     
     // Verify order: key0, key1, key2
     try std.testing.expectEqual(@as(u16, 3), ptr.getNumEntries());
@@ -519,17 +533,17 @@ test "PageHeader Copy/Truncate" {
     p2.init(4096, P_LEAF);
     
     // Fill p1
-    _ = p1.putNode(0, "A", "ValueA", 0);
-    _ = p1.putNode(1, "B", "ValueB", 0);
-    _ = p1.putNode(2, "C", "ValueC", 0);
-    _ = p1.putNode(3, "D", "ValueD", 0);
+    _ = try p1.putNode(0, "A", "ValueA", 0);
+    _ = try p1.putNode(1, "B", "ValueB", 0);
+    _ = try p1.putNode(2, "C", "ValueC", 0);
+    _ = try p1.putNode(3, "D", "ValueD", 0);
     
     try std.testing.expectEqual(@as(u16, 4), p1.getNumEntries());
     
     // Copy last 2 to p2
     // p1: A, B, C, D
     // copy C, D (indices 2, 3) -> count=2
-    p1.copyNodes(p2, 2, 2);
+    try p1.copyNodes(p2, 2, 2);
     
     try std.testing.expectEqual(@as(u16, 2), p2.getNumEntries());
     try std.testing.expectEqualStrings("C", p2.getNode(0).getKey());
