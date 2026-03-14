@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Marcelo Tesla
+//
+// This software is provided under the MIT License.
+// See the LICENSE file at the root of the project for the full text.
+//
+// SPDX-License-Identifier: MIT
 //! Environment — pure Zig, no C.
 //! Represents an open .monolith database file.
 //! Owns the mmap region, the ping-pong meta pages, and the LockManager.
@@ -124,6 +130,8 @@ pub const Environment = struct {
             .dbi_free_slots = .{},
             .dbi_next      = 1,
         };
+        // Pre-allocate free-slot list so closeDBI/openDbi appends never OOM.
+        try env.dbi_free_slots.ensureTotalCapacity(env.allocator, max_dbs);
 
         if (is_new) {
             try env.initNewDB(map_size);
@@ -136,7 +144,7 @@ pub const Environment = struct {
 
     /// Flushes and closes the environment, releasing all resources.
     pub fn close(self: *Environment) void {
-        if (!self.rdonly) self.map.sync(); // always flush on close regardless of skip_sync
+        if (!self.rdonly) self.map.sync() catch {}; // best-effort flush on close
         self.map.deinit();
         self.lock.deinit();
         self.file.close();
@@ -164,8 +172,17 @@ pub const Environment = struct {
     // ─── Page access ─────────────────────────────────────────────────────────
 
     /// Raw pointer to the PageHeader of page `pgno` in the mmap.
+    /// Callers must ensure pgno is within the committed range (< first_unallocated).
     pub fn getPagePtr(self: *const Environment, pgno: u32) *page_mod.PageHeader {
         const offset = @as(usize, pgno) * PAGE_SIZE;
+        std.debug.assert(offset + PAGE_SIZE <= self.map.len); // catches out-of-range pgno in debug
+        return @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + offset)));
+    }
+
+    /// Bounds-checked variant. Returns error.InvalidPage if pgno is out of range.
+    pub fn getPagePtrSafe(self: *const Environment, pgno: u32) !*page_mod.PageHeader {
+        const offset = @as(usize, pgno) * PAGE_SIZE;
+        if (offset + PAGE_SIZE > self.map.len) return error.InvalidPage;
         return @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + offset)));
     }
 
@@ -287,7 +304,7 @@ pub const Environment = struct {
             p.dupfix_ksize = page_mod.computePageChecksum(p, PAGE_SIZE);
         }
 
-        self.map.sync();
+        try self.map.sync();
         self.best_meta_idx = 0;
     }
 
@@ -318,16 +335,35 @@ pub const Environment = struct {
         if (self.map.len - live_size <= self.shrink_threshold) return;
         const new_size = live_size;
         if (new_size >= self.map.len) return;
-        self.map.deinit();
-        self.file.setEndPos(new_size) catch {
-            // Truncate failed — remap at live_size as fallback.
-            self.map = os_mod.MmapRegion.init(self.file, live_size, self.rdonly) catch return;
-            return;
-        };
-        self.map = os_mod.MmapRegion.init(self.file, new_size, self.rdonly) catch {
-            self.map = os_mod.MmapRegion.init(self.file, live_size, self.rdonly) catch return;
-            return;
-        };
+        const old_len = self.map.len;
+        if (comptime @import("builtin").os.tag == .windows) {
+            // Windows: cannot truncate a file while a view is mapped.
+            // Must unmap first, then truncate, then remap.
+            self.map.deinit();
+            self.file.setEndPos(new_size) catch {
+                // Truncate failed — remap at original size.
+                self.map = os_mod.MmapRegion.init(self.file, old_len, self.rdonly) catch return;
+                return;
+            };
+            self.map = os_mod.MmapRegion.init(self.file, new_size, self.rdonly) catch {
+                // Remap failed — restore file size, remap at old size (best effort).
+                self.file.setEndPos(old_len) catch {};
+                self.map = os_mod.MmapRegion.init(self.file, old_len, self.rdonly) catch return;
+                return;
+            };
+        } else {
+            // POSIX: can truncate while the old mmap is alive.
+            // Try-then-swap: keep old map valid until new one is ready.
+            self.file.setEndPos(new_size) catch return; // truncate failed — keep old map
+            const new_map = os_mod.MmapRegion.init(self.file, new_size, self.rdonly) catch {
+                // Remap failed. Restore file size so the old map remains consistent.
+                self.file.setEndPos(old_len) catch {};
+                return;
+            };
+            // Success: release the old mapping.
+            self.map.deinit();
+            self.map = new_map;
+        }
     }
 
     // ─── Sync ────────────────────────────────────────────────────────────────
@@ -336,7 +372,7 @@ pub const Environment = struct {
     /// Useful when operating in safe_nosync or nosync mode to durably
     /// persist a batch of committed transactions at a chosen point.
     pub fn sync(self: *Environment) void {
-        self.map.sync();
+        self.map.sync() catch {}; // public API stays void; errors are best-effort
     }
 
     // ─── Geometry ────────────────────────────────────────────────────────────
