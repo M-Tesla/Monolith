@@ -203,7 +203,43 @@ This did not start clean. Early versions carried C dependencies for platform I/O
 
 **v0.14** sorted flush: dirty pages were written in hash-map iteration order (random). Sorting by pgno before writing turns random I/O into sequential I/O. One sort, real gain, especially on spinning disk.
 
-Throughout all of this, every feature shipped with tests. The test suite grew from a handful of sanity checks to 146 tests covering basic CRUD, splits, merges, overflow, dupsort, nested txns, GC recycling, MVCC isolation, crash safety, writemap, geometry, shrink, checksums, backup, compaction, and every flag combination that matters.
+**v0.15** production hardening. A full audit of every file in the engine. Nine confirmed bugs, all fixed.
+
+**v0.16** three additional bugs corrected, twelve features added.
+
+`unlockWriter` failures were silently discarded with `catch {}` in two separate places — commit cleanup and begin-time rollback. If the OS unlock syscall failed, the write lock would never be released, permanently blocking all future writers. The swallowed error is now logged via `std.log.err`.
+
+`MAX_DEPTH = 64` was defined in `core/consts.zig` and used to size the `path[]` stack arrays in `btreePut` and `btreeDel`, but the descent loops never checked `path_len >= MAX_DEPTH` before writing. An adversarially deep key sequence could overflow the stack buffer. Added explicit guards returning `error.TreeTooDeep`.
+
+`btreeDelPrefix` — used internally for DupSort bulk deletion — stopped after the first leaf page. If a key's duplicate values spanned multiple pages, only the first page worth of entries was deleted. The function was rewritten to loop from the root on every iteration, deleting one entry at a time via `btreeDel` until no matching prefix remains.
+
+On the feature side: `cursor.seekRange()` now returns a `SeekResult` struct that distinguishes an exact match from a lower-bound positioning. `txn.reset()` adds the missing half of the reset/renew lifecycle for read-only transactions — it releases the reader slot and dormantizes the handle so `renew()` can reacquire a fresh snapshot without allocating a new transaction object. `PutFlags.alldups` replaces all duplicate values for a key with a single new one; `PutFlags.appenddup` bypasses the sorted insert for dup values guaranteed to be greater than all existing ones. `txn.listTables()` enumerates all named DBIs in the catalog. `txn.renameDbi()` renames a DBI with collision and not-found guards. `env.deleteFiles()`, `env.getPath()`, and `env.getFlags()` round out the environment introspection surface. `env.readerList()` and `env.readerCheck()` expose the reader slot table for monitoring and dead-process cleanup. `cursor.copy()` returns a value-copy of the cursor state with no heap allocation. `TxnFlags.try_begin` acquires the write lock non-blocking and returns `error.Busy` immediately if it is held. `TxnFlags.nosync` skips fsync for a single transaction regardless of the environment sync policy.
+
+`putNode` used `@panic` in four runtime conditions — key too long, page full, wrong page type, bad branch argument. Any of those would kill the process with no recovery path. The function signature changed from `*Node` to `!*Node`, returning typed errors. Every call site in the codebase was updated.
+
+`MmapRegion.sync()` returned `void` and discarded all I/O errors — `FlushViewOfFile` on Windows with `_ =`, `msync` on POSIX with `catch {}`. A committed transaction could believe it was durable when the disk had failed. The function now returns `!void` and the error propagates through `commit()`.
+
+`first_unallocated` is a `u32`. At `0xFFFFFFFF`, an unchecked increment would wrap to 0 and the engine would start allocating pages over the meta pages. Added an explicit guard before every allocation. The same check covers overflow page runs, where the addition `first_pgno + n_pages` could exceed 32 bits.
+
+Checksums were computed and written on every commit but never verified on read. A bit-flip, a partial write, memory corruption — all passed through undetected. Added `validatePageChecksum()` called in `getWritablePage()` when copying a page from the mmap. Skipped for nested transactions: pages from a parent's dirty list have not been flushed yet and carry no checksum.
+
+In exclusive mode, reader slot methods were walking a global `ReaderTable` via a raw pointer. Since exclusive mode is single-process by definition, reader tracking is not needed at all. All methods that touched `self.table` now return early when `exclusive = true`. The pointer is never accessed.
+
+`closeDBI` and the error paths in `openDbi` used `dbi_free_slots.append(...) catch {}`. An OOM failure there silently orphaned the slot. With enough open/close cycles under memory pressure, the environment would report `error.DbsFull` prematurely. Fixed with `ensureTotalCapacity(max_dbs)` at environment open time.
+
+DBI names longer than 255 bytes were silently truncated. Two DBIs whose names shared the first 255 characters would resolve to the same slot. Added explicit validation: `error.NameTooLong`.
+
+`tryAutoShrink` called `self.map.deinit()` before attempting the remap. If `MmapRegion.init()` failed, `self.map` pointed at an unmapped region. Platform-aware fix: on POSIX, the file can be truncated while the old mapping is alive, so the new mapping is obtained before releasing the old one (try-then-swap). On Windows, unmapping before truncating is required, so the original unmap-first sequence is kept but with a proper fallback that restores the file size if remap fails.
+
+`getPagePtr` had no bounds check. A corrupted pgno from a B-tree node would read beyond the mmap with no signal. Added `std.debug.assert` to catch the condition in debug and test builds. A `getPagePtrSafe()` variant returning `!*PageHeader` is available for callers that need explicit error handling.
+
+**v0.17** API completeness.
+
+`txn.txnInfo()` returns live space accounting for the current transaction: bytes allocated in the map, map upper bound, bytes held by dirty pages, bytes held by freed pages waiting for GC, and the txnid of the oldest active reader. `txn.dbiFlags(dbi)` returns the `DbFlags` struct for any open DBI handle — previously there was no public way to query flags after `openDbi`. `txn.getEx(dbi, key)` combines a lookup with a duplicate count in a single call: for non-DupSort DBIs count is always 1; for DupSort it returns the number of distinct dup values without a separate cursor. `cursor.compare(other)` compares two cursor positions on the same DBI, returning `.lt` / `.eq` / `.gt`; an invalid (exhausted) cursor is treated as past-end. `env.setHsr(fn, ctx)` registers a Handle-Slow-Reader callback invoked by the GC loader when a lagging read transaction is blocking page reclaim — the callback receives the laggard txnid and the gap in txnids, giving the application a chance to log, alert, or close the offending reader.
+
+While implementing `cursor.compare`, a latent crash was found: the internal `currentKey()` helper was calling `env.getPagePtr()` (mmap-direct) instead of `txn.getPage()` (dirty-list-aware). Any comparison involving a cursor inside an uncommitted write transaction would access a page that existed only in the dirty list, not in the mmap, causing a bounds-check failure. Fixed by routing through `txn.getPage()`.
+
+**v0.18** — true MVCC. Snapshot isolation had been promised since v0.3 but never actually enforced. `getWritablePage` was writing modified buffers back to the same pgno in the mmap on commit, silently overwriting pages that concurrent readers were still traversing. With true path-copying CoW, every committed page that needs modification gets a new pgno. The original page stays untouched in the mmap for as long as any reader can reach it. Three bugs found in the process: `Cursor.del()` was using the old return type of `getWritablePage` and did not compile; `absorbOldGCEntries` became re-entrant during path-copy and caused an integer underflow in `tree.items`; `allocPage` was returning GC-reclaimed pages without a `dirty_list` entry, causing `getWritablePage` to path-copy them as if they were mmap pages — silently corrupting the B-tree structure. Four new snapshot isolation tests added. 197 tests passing.
 
 ---
 
@@ -213,7 +249,7 @@ Throughout all of this, every feature shipped with tests. The test suite grew fr
 zig test src/lib.zig
 ```
 
-146 tests. All pass.
+197 tests. All pass.
 
 ```
 test_basic            . test_dupsort          . test_integerkey
@@ -226,7 +262,11 @@ test_replace          . test_compact          . test_spill
 test_writemap         . test_sync_flags       . test_txn_renew
 test_close_dbi        . test_geometry         . test_shrink
 test_liforeclaim      . test_exclusive        . test_coalesce
-test_sorted_flush     . test_accede
+test_sorted_flush     . test_accede           . test_bugs
+test_seek_range       . test_txn_reset        . test_alldups_appenddup
+test_list_tables      . test_rename_dbi       . test_env_ops
+test_cursor_copy      . test_txn_flags        . test_v017
+test_snapshot_isolation
 ```
 
 ---
@@ -252,7 +292,7 @@ zig build
 zig test src/lib.zig
 ```
 
-Zig 0.15+. No C compiler. No system libraries beyond the OS itself.
+Zig 0.15.2. No C compiler. No system libraries beyond the OS itself.
 
 ---
 

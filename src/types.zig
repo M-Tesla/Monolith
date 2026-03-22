@@ -61,6 +61,10 @@ pub const Error = error{
     ErrnoIo,
     /// Unknown/unmapped error
     Unknown,
+    /// B-tree depth exceeds MAX_DEPTH limit
+    TreeTooDeep,
+    /// DBI name is too long (> 255 bytes)
+    NameTooLong,
 };
 
 // ---------------------------------------------------------------------------
@@ -135,7 +139,11 @@ pub const DbFlags = struct {
 // Transaction flags
 // ---------------------------------------------------------------------------
 pub const TxnFlags = struct {
-    rdonly: bool = false,
+    rdonly:     bool = false,
+    /// Skip fsync on commit for this transaction only (per-txn nosync override).
+    nosync:     bool = false,
+    /// Try to acquire the write lock without blocking; returns error.Busy if held.
+    try_begin:  bool = false,
 };
 
 // ---------------------------------------------------------------------------
@@ -150,6 +158,10 @@ pub const PutFlags = struct {
     current: bool = false,
     /// Key MUST be greater than the last inserted key (bulk-load optimisation)
     append: bool = false,
+    /// DupSort only: replace ALL duplicate values for this key with the single new value
+    alldups: bool = false,
+    /// DupSort only: append dup value guaranteed >= all existing dups (skips sorted insert)
+    appenddup: bool = false,
 };
 
 // ---------------------------------------------------------------------------
@@ -190,4 +202,50 @@ pub const EnvStat = struct {
     last_txnid:      u64,
     /// Maximum pages allowed by the current geometry
     geo_upper_pages: u64,
+};
+
+// ---------------------------------------------------------------------------
+// SeekResult — result of cursor.seekRange() indicating exact or approximate match
+// ---------------------------------------------------------------------------
+pub const SeekResult = struct {
+    kv:    KV,
+    /// true if the cursor landed on an exact match for the search key;
+    /// false if positioned on the first key strictly greater than the search key.
+    exact: bool,
+};
+
+// ---------------------------------------------------------------------------
+// ReaderInfo — snapshot of a single reader slot (for env.readerList)
+// ---------------------------------------------------------------------------
+pub const ReaderInfo = struct {
+    slot_idx: u32,
+    pid:      u32,
+    tid:      u32,
+    txnid:    u64,
+};
+
+// ---------------------------------------------------------------------------
+// TxnInfo — live space accounting for a transaction
+// ---------------------------------------------------------------------------
+pub const TxnInfo = struct {
+    /// Bytes currently allocated in the map (first_unallocated * PAGE_SIZE).
+    space_used:    u64,
+    /// Map upper-bound in bytes (0 = unlimited).
+    space_limit:   u64,
+    /// Bytes held by dirty (not yet committed) pages in this transaction.
+    space_dirty:   u64,
+    /// Bytes held by pages freed in this transaction, waiting for GC.
+    space_retired: u64,
+    /// TxnID of the oldest active reader (0 if none / exclusive mode).
+    reader_txnid:  u64,
+};
+
+// ---------------------------------------------------------------------------
+// GetExResult — result of txn.getEx() — value + duplicate count
+// ---------------------------------------------------------------------------
+pub const GetExResult = struct {
+    /// The value associated with the key (first dup for DupSort DBIs).
+    val:   []const u8,
+    /// Number of duplicate values for this key (always 1 for non-DupSort DBIs).
+    count: usize,
 };

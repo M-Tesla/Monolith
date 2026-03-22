@@ -38,6 +38,13 @@ pub const Environment = struct {
     map_full_fn: ?*const fn (*Environment, usize) anyerror!usize,
     /// Arbitrary user pointer attached to the environment.
     user_ctx: ?*anyopaque,
+    /// Handle-Slow-Reader callback: called when a lagging reader is blocking GC.
+    /// Receives the environment, the laggard txnid, the number of txnids it is
+    /// behind the latest committed txnid, and the optional user context.
+    /// Can be used to log, alert, or forcibly close the laggard.
+    hsr_fn:  ?*const fn (env: *Environment, laggard_txnid: u64, gap: u64, ctx: ?*anyopaque) void,
+    /// Optional user context passed to hsr_fn.
+    hsr_ctx: ?*anyopaque,
     /// True when opened with the writemap flag: dirty pages are written
     /// directly into the mmap instead of heap-allocated buffers.
     writemap: bool,
@@ -49,6 +56,10 @@ pub const Environment = struct {
     exclusive: bool,
     /// Merge reclaimable GC entries into the current txn's entry (default ON).
     coalesce: bool,
+    /// Null-terminated path the environment was opened with (heap-allocated).
+    path: [:0]u8,
+    /// Flags the environment was opened with (for getFlags()).
+    open_flags: types.EnvFlags,
     // ─── Geometry ───────────────────────────────────────────────────────────
     /// Maximum map size in bytes (0 = unlimited).
     size_upper: usize,
@@ -108,6 +119,9 @@ pub const Environment = struct {
             try lock_mod.LockManager.init(path_slice, std.heap.page_allocator);
         errdefer lock.deinit();
 
+        const path_heap = try std.heap.page_allocator.dupeZ(u8, path_slice);
+        errdefer std.heap.page_allocator.free(path_heap);
+
         var env = Environment{
             .file          = file,
             .map           = map,
@@ -118,6 +132,8 @@ pub const Environment = struct {
             .best_meta_idx = 0,
             .map_full_fn   = null,
             .user_ctx      = null,
+            .hsr_fn        = null,
+            .hsr_ctx       = null,
             .writemap      = flags.writemap,
             .skip_sync     = flags.safe_nosync or flags.nosync,
             .liforeclaim   = flags.liforeclaim,
@@ -129,7 +145,11 @@ pub const Environment = struct {
             .dbi_registry  = .{},
             .dbi_free_slots = .{},
             .dbi_next      = 1,
+            .path          = path_heap,
+            .open_flags    = flags,
         };
+        // Pre-allocate free-slot list so closeDBI/openDbi appends never OOM.
+        try env.dbi_free_slots.ensureTotalCapacity(env.allocator, max_dbs);
 
         if (is_new) {
             try env.initNewDB(map_size);
@@ -142,7 +162,7 @@ pub const Environment = struct {
 
     /// Flushes and closes the environment, releasing all resources.
     pub fn close(self: *Environment) void {
-        if (!self.rdonly) self.map.sync(); // always flush on close regardless of skip_sync
+        if (!self.rdonly) self.map.sync() catch {}; // best-effort flush on close
         self.map.deinit();
         self.lock.deinit();
         self.file.close();
@@ -151,6 +171,7 @@ pub const Environment = struct {
         while (it.next()) |key| self.allocator.free(key.*);
         self.dbi_registry.deinit(self.allocator);
         self.dbi_free_slots.deinit(self.allocator);
+        self.allocator.free(self.path);
     }
 
     // ─── Meta access ─────────────────────────────────────────────────────────
@@ -170,9 +191,29 @@ pub const Environment = struct {
     // ─── Page access ─────────────────────────────────────────────────────────
 
     /// Raw pointer to the PageHeader of page `pgno` in the mmap.
+    /// Callers must ensure pgno is within the committed range (< first_unallocated).
     pub fn getPagePtr(self: *const Environment, pgno: u32) *page_mod.PageHeader {
         const offset = @as(usize, pgno) * PAGE_SIZE;
+        std.debug.assert(offset + PAGE_SIZE <= self.map.len); // catches out-of-range pgno in debug
         return @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + offset)));
+    }
+
+    /// Bounds-checked variant. Returns error.InvalidPage if pgno is out of range.
+    pub fn getPagePtrSafe(self: *const Environment, pgno: u32) !*page_mod.PageHeader {
+        const offset = @as(usize, pgno) * PAGE_SIZE;
+        if (offset + PAGE_SIZE > self.map.len) return error.InvalidPage;
+        return @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + offset)));
+    }
+
+    /// Re-maps the mmap to the current on-disk file size if another process
+    /// has grown the file beyond our current mapping.
+    /// For write transactions: call after acquiring the write lock.
+    /// For read transactions: call before registering the reader slot.
+    pub fn syncMapToFile(self: *Environment) !void {
+        const file_size = try self.file.getEndPos();
+        if (file_size <= self.map.len) return;
+        self.map.deinit();
+        self.map = try os_mod.MmapRegion.init(self.file, file_size, self.rdonly);
     }
 
     // ─── Resize ──────────────────────────────────────────────────────────────
@@ -293,7 +334,7 @@ pub const Environment = struct {
             p.dupfix_ksize = page_mod.computePageChecksum(p, PAGE_SIZE);
         }
 
-        self.map.sync();
+        try self.map.sync();
         self.best_meta_idx = 0;
     }
 
@@ -324,16 +365,35 @@ pub const Environment = struct {
         if (self.map.len - live_size <= self.shrink_threshold) return;
         const new_size = live_size;
         if (new_size >= self.map.len) return;
-        self.map.deinit();
-        self.file.setEndPos(new_size) catch {
-            // Truncate failed — remap at live_size as fallback.
-            self.map = os_mod.MmapRegion.init(self.file, live_size, self.rdonly) catch return;
-            return;
-        };
-        self.map = os_mod.MmapRegion.init(self.file, new_size, self.rdonly) catch {
-            self.map = os_mod.MmapRegion.init(self.file, live_size, self.rdonly) catch return;
-            return;
-        };
+        const old_len = self.map.len;
+        if (comptime @import("builtin").os.tag == .windows) {
+            // Windows: cannot truncate a file while a view is mapped.
+            // Must unmap first, then truncate, then remap.
+            self.map.deinit();
+            self.file.setEndPos(new_size) catch {
+                // Truncate failed — remap at original size.
+                self.map = os_mod.MmapRegion.init(self.file, old_len, self.rdonly) catch return;
+                return;
+            };
+            self.map = os_mod.MmapRegion.init(self.file, new_size, self.rdonly) catch {
+                // Remap failed — restore file size, remap at old size (best effort).
+                self.file.setEndPos(old_len) catch {};
+                self.map = os_mod.MmapRegion.init(self.file, old_len, self.rdonly) catch return;
+                return;
+            };
+        } else {
+            // POSIX: can truncate while the old mmap is alive.
+            // Try-then-swap: keep old map valid until new one is ready.
+            self.file.setEndPos(new_size) catch return; // truncate failed — keep old map
+            const new_map = os_mod.MmapRegion.init(self.file, new_size, self.rdonly) catch {
+                // Remap failed. Restore file size so the old map remains consistent.
+                self.file.setEndPos(old_len) catch {};
+                return;
+            };
+            // Success: release the old mapping.
+            self.map.deinit();
+            self.map = new_map;
+        }
     }
 
     // ─── Sync ────────────────────────────────────────────────────────────────
@@ -342,7 +402,7 @@ pub const Environment = struct {
     /// Useful when operating in safe_nosync or nosync mode to durably
     /// persist a batch of committed transactions at a chosen point.
     pub fn sync(self: *Environment) void {
-        self.map.sync();
+        self.map.sync() catch {}; // public API stays void; errors are best-effort
     }
 
     // ─── Geometry ────────────────────────────────────────────────────────────
@@ -383,6 +443,70 @@ pub const Environment = struct {
 
     pub fn getUserCtx(self: *const Environment) ?*anyopaque {
         return self.user_ctx;
+    }
+
+    /// Sets the Handle-Slow-Reader callback.
+    /// Called by the GC loader when a lagging reader prevents page reclaim.
+    /// Pass `null` to clear.  `ctx` is forwarded to every invocation.
+    pub fn setHsr(
+        self: *Environment,
+        hsr:  ?*const fn (env: *Environment, laggard_txnid: u64, gap: u64, ctx: ?*anyopaque) void,
+        ctx:  ?*anyopaque,
+    ) void {
+        self.hsr_fn  = hsr;
+        self.hsr_ctx = ctx;
+    }
+
+    // ─── Introspection ───────────────────────────────────────────────────────
+
+    /// Returns the null-terminated path the environment was opened with.
+    pub fn getPath(self: *const Environment) [:0]const u8 {
+        return self.path;
+    }
+
+    /// Returns the flags the environment was opened with.
+    pub fn getFlags(self: *const Environment) types.EnvFlags {
+        return self.open_flags;
+    }
+
+    /// Deletes the environment data file and its lock file (best-effort, static utility).
+    /// Call only after the environment is closed.
+    pub fn deleteFiles(path: [:0]const u8) void {
+        const slice = path[0..path.len];
+        std.fs.cwd().deleteFile(slice) catch {};
+        var lck_buf: [4096]u8 = undefined;
+        const lck = std.fmt.bufPrint(&lck_buf, "{s}-lck", .{slice}) catch return;
+        std.fs.cwd().deleteFile(lck) catch {};
+    }
+
+    // ─── Reader management ────────────────────────────────────────────────────
+
+    /// Calls `callback` once for each currently active reader slot.
+    pub fn readerList(
+        self:     *const Environment,
+        callback: *const fn (info: types.ReaderInfo, ctx: ?*anyopaque) void,
+        ctx:      ?*anyopaque,
+    ) void {
+        if (self.exclusive) return;
+        const table = self.lock.table;
+        var i: u32 = 0;
+        while (i < table.num_slots) : (i += 1) {
+            const slot  = &table.slots[i];
+            const txnid = @atomicLoad(u64, &slot.txnid, .acquire);
+            if (txnid != 0) {
+                callback(.{
+                    .slot_idx = i,
+                    .pid      = slot.pid,
+                    .tid      = slot.tid,
+                    .txnid    = txnid,
+                }, ctx);
+            }
+        }
+    }
+
+    /// Clears reader slots belonging to dead processes. Returns how many were cleared.
+    pub fn readerCheck(self: *Environment) u32 {
+        return self.lock.recoverDeadSlotsCount();
     }
 
     // ─── Backup ───────────────────────────────────────────────────────────────

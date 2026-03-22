@@ -35,7 +35,11 @@ pub const Error     = types.Error;
 pub const Stat      = types.Stat;
 pub const EnvStat   = types.EnvStat;
 pub const Geometry  = types.Geometry;
-pub const CheckResult = Environment.CheckResult;
+pub const CheckResult  = Environment.CheckResult;
+pub const SeekResult   = types.SeekResult;
+pub const ReaderInfo   = types.ReaderInfo;
+pub const TxnInfo      = types.TxnInfo;
+pub const GetExResult  = types.GetExResult;
 
 // -------------------------------------------------------------------------
 // Integration tests
@@ -73,4 +77,15 @@ test {
     _ = @import("tests/test_coalesce.zig");
     _ = @import("tests/test_sorted_flush.zig");
     _ = @import("tests/test_accede.zig");
+    _ = @import("tests/test_bugs.zig");
+    _ = @import("tests/test_seek_range.zig");
+    _ = @import("tests/test_txn_reset.zig");
+    _ = @import("tests/test_alldups_appenddup.zig");
+    _ = @import("tests/test_list_tables.zig");
+    _ = @import("tests/test_rename_dbi.zig");
+    _ = @import("tests/test_env_ops.zig");
+    _ = @import("tests/test_cursor_copy.zig");
+    _ = @import("tests/test_txn_flags.zig");
+    _ = @import("tests/test_v017.zig");
+    _ = @import("tests/test_snapshot_isolation.zig");
 }

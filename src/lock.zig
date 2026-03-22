@@ -21,27 +21,22 @@ pub const ReaderTable = extern struct {
     slots: [126]ReaderSlot, // Fit in 4KB roughly? 126 * 16 = 2016. Plenty of space.
 };
 
-/// Inline reader table used in exclusive mode (no .lck file).
-var exclusive_table: ReaderTable = std.mem.zeroes(ReaderTable);
-
 pub const LockManager = struct {
     file: std.fs.File,
     map: os.MmapRegion,
     table: *ReaderTable,
     allocator: std.mem.Allocator,
     /// When true all lock operations are no-ops (exclusive mode).
+    /// In exclusive mode, reader-slot methods return early without touching self.table.
     exclusive: bool = false,
 
     /// Returns a no-op LockManager for exclusive mode.
-    /// No .lck file is created; all lock operations succeed immediately.
+    /// No .lck file is created; all lock/reader operations succeed immediately.
     pub fn initExclusive() LockManager {
-        exclusive_table = std.mem.zeroes(ReaderTable);
-        exclusive_table.magic     = 0xBEEFDEAD;
-        exclusive_table.num_slots = 126;
         return LockManager{
             .file      = undefined,
             .map       = undefined,
-            .table     = &exclusive_table,
+            .table     = undefined, // never accessed in exclusive mode
             .allocator = undefined,
             .exclusive = true,
         };
@@ -97,6 +92,12 @@ pub const LockManager = struct {
         try os.lockFile(self.file, true, true);
     }
 
+    /// Non-blocking write lock attempt. Returns error.Busy if the lock is already held.
+    pub fn tryLockWriter(self: *LockManager) !void {
+        if (self.exclusive) return;
+        os.lockFile(self.file, true, false) catch return error.Busy;
+    }
+
     pub fn unlockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
         try os.unlockFile(self.file);
@@ -104,6 +105,7 @@ pub const LockManager = struct {
     
     // Returns slot index
     pub fn registerReader(self: *LockManager, txnid: u64) !usize {
+        if (self.exclusive) return 0; // exclusive mode: single process, no slot needed
         if (try self.tryClaimSlot(txnid)) |idx| return idx;
         self.recoverDeadSlots();
         if (try self.tryClaimSlot(txnid)) |idx| return idx;
@@ -128,16 +130,15 @@ pub const LockManager = struct {
     }
     
     pub fn recoverDeadSlots(self: *LockManager) void {
+        if (self.exclusive) return;
         var i: usize = 0;
         while (i < self.table.num_slots) : (i += 1) {
             const slot = &self.table.slots[i];
             const txnid = @atomicLoad(u64, &slot.txnid, .acquire);
             const pid = slot.pid;
-            
+
             if (txnid != 0 and pid != 0) {
                 if (!os.isProcessAlive(pid)) {
-                    // Process is dead. Clear slot.
-                    // Release lock.
                     slot.pid = 0;
                     slot.tid = 0;
                     @atomicStore(u64, &slot.txnid, 0, .release);
@@ -146,13 +147,34 @@ pub const LockManager = struct {
         }
     }
 
+    /// Clears slots belonging to dead processes and returns how many were cleared.
+    pub fn recoverDeadSlotsCount(self: *LockManager) u32 {
+        if (self.exclusive) return 0;
+        var cleared: u32 = 0;
+        var i: usize = 0;
+        while (i < self.table.num_slots) : (i += 1) {
+            const slot = &self.table.slots[i];
+            const txnid = @atomicLoad(u64, &slot.txnid, .acquire);
+            const pid = slot.pid;
+            if (txnid != 0 and pid != 0 and !os.isProcessAlive(pid)) {
+                slot.pid = 0;
+                slot.tid = 0;
+                @atomicStore(u64, &slot.txnid, 0, .release);
+                cleared += 1;
+            }
+        }
+        return cleared;
+    }
+
     pub fn unregisterReader(self: *LockManager, slot_idx: usize) void {
+        if (self.exclusive) return;
         if (slot_idx >= self.table.num_slots) return;
         const slot = &self.table.slots[slot_idx];
         @atomicStore(u64, &slot.txnid, 0, .release);
     }
     
     pub fn getOldestReader(self: *LockManager, limit_txnid: u64) u64 {
+        if (self.exclusive) return limit_txnid; // no readers in exclusive mode
         var min_txnid = limit_txnid;
         var i: usize = 0;
         
