@@ -47,11 +47,14 @@ pub const LockManager = struct {
         const key_path = try std.fmt.allocPrint(allocator, "{s}-lck", .{path});
         defer allocator.free(key_path);
         
-        var file = try std.fs.cwd().createFile(key_path, .{
-            .read = true,
-            .truncate = false,
-            .exclusive = false, // Open if exists
-        });
+        var file = if (std.fs.path.isAbsolute(key_path))
+            try std.fs.createFileAbsolute(key_path, .{
+                .read = true, .truncate = false, .exclusive = false,
+            })
+        else
+            try std.fs.cwd().createFile(key_path, .{
+                .read = true, .truncate = false, .exclusive = false,
+            });
         errdefer file.close();
         
         const size = try file.getEndPos();
