@@ -633,8 +633,14 @@ pub const Transaction = struct {
             self.loading_gc = true;
             defer self.loading_gc = false;
             try self.loadGCBatch();
-            if (self.reclaimed_pages.items.len > 0)
-                return self.reclaimed_pages.pop().?;
+            if (self.reclaimed_pages.items.len > 0) {
+                const pgno = self.reclaimed_pages.pop().?;
+                const buf = try self.allocator.alloc(u8, PAGE_SIZE);
+                @memset(buf, 0);
+                try self.dirty_list.put(self.allocator, pgno, buf);
+                if (self.parent == null) try self.trySpill();
+                return pgno;
+            }
         }
         // 4. Fresh allocation.
         const pgno = self.meta.geometry.first_unallocated;
