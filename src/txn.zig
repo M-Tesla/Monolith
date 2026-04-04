@@ -375,15 +375,108 @@ pub const Transaction = struct {
         //    reclaim them once no reader holds a snapshot of this txnid.
         try self.serializeFreedPages();
 
+        // 3-7. Write pages, meta, sync, shrink.
+        try self.finishCommit();
+    }
+
+    // ─── Replication support ──────────────────────────────────────────────────
+
+    /// A dirty page captured for replication.
+    pub const CapturedPage = struct {
+        pgno: u32,
+        /// Caller-owned copy of the page data (PAGE_SIZE bytes).
+        data: []u8,
+    };
+
+    /// Snapshot of all pages that will be written on the next finishCommit().
+    /// Free with deinit() when no longer needed.
+    pub const CapturedCommit = struct {
+        txnid: u64,
+        /// Deep copies of every dirty B-tree page.
+        pages: []CapturedPage,
+        /// PAGE_SIZE bytes: serialised meta for the next ping-pong slot.
+        meta:  []u8,
+        alloc: std.mem.Allocator,
+
+        pub fn deinit(self: CapturedCommit) void {
+            for (self.pages) |p| self.alloc.free(p.data);
+            self.alloc.free(self.pages);
+            self.alloc.free(self.meta);
+        }
+    };
+
+    /// Prepare a commit for replication.
+    ///
+    /// Runs flushDbiState() and serializeFreedPages(), then returns a deep copy
+    /// of every dirty page plus the serialised meta for the next ping-pong slot.
+    /// The transaction remains open and still holds the writer lock.
+    ///
+    /// The caller MUST call either finishCommit() or abort() afterwards.
+    ///
+    /// Typical leader flow:
+    ///   1. `const cap = try txn.prepareAndCapture(alloc);`
+    ///   2. Replicate cap.pages + cap.meta to Raft peers, wait for quorum.
+    ///   3a. Quorum reached → `try txn.finishCommit();`
+    ///   3b. No quorum     → `txn.abort();`
+    pub fn prepareAndCapture(self: *Transaction, alloc: std.mem.Allocator) !CapturedCommit {
+        if (self.rdonly or self.parent != null or self.committed) return error.BadTxn;
+
+        try self.flushDbiState();
+        try self.serializeFreedPages();
+
+        // Deep-copy every dirty + spilled page.
+        const count = self.dirty_list.count() + self.spill_list.count();
+        var captured = try alloc.alloc(CapturedPage, count);
+        errdefer {
+            for (captured[0..@min(count, captured.len)]) |p| alloc.free(p.data);
+            alloc.free(captured);
+        }
+        var i: usize = 0;
+        {
+            var it = self.dirty_list.iterator();
+            while (it.next()) |e| {
+                const buf = try alloc.alloc(u8, PAGE_SIZE);
+                @memcpy(buf, e.value_ptr.*[0..PAGE_SIZE]);
+                captured[i] = .{ .pgno = e.key_ptr.*, .data = buf };
+                i += 1;
+            }
+        }
+        {
+            var sit = self.spill_list.iterator();
+            while (sit.next()) |e| {
+                const buf = try alloc.alloc(u8, PAGE_SIZE);
+                @memcpy(buf, e.value_ptr.*[0..PAGE_SIZE]);
+                captured[i] = .{ .pgno = e.key_ptr.*, .data = buf };
+                i += 1;
+            }
+        }
+
+        // Serialise the meta that would be written to the next ping-pong slot.
+        const meta_buf = try alloc.alloc(u8, PAGE_SIZE);
+        @memset(meta_buf, 0);
+        const m = @as(*meta_mod.Meta, @ptrCast(@alignCast(meta_buf.ptr)));
+        m.* = self.meta;
+        m.txnid_a = self.txnid;
+        m.txnid_b = self.txnid;
+
+        return .{
+            .txnid = self.txnid,
+            .pages = captured,
+            .meta  = meta_buf,
+            .alloc = alloc,
+        };
+    }
+
+    /// Complete a commit that was previously prepared via prepareAndCapture(),
+    /// or called internally by commit() for the root write path.
+    ///
+    /// Writes all dirty pages to the mmap, flips the ping-pong meta slot,
+    /// syncs (unless nosync), and frees transaction state via cleanup().
+    pub fn finishCommit(self: *Transaction) !void {
         // 3+4. Stamp checksums and write pages to the mmap.
-        //
-        //  - dirty_pages_wm (writemap only): existing pages modified directly in
-        //    the mmap — stamp checksums in-place; no copy needed.
-        //  - dirty_list / spill_list: new pages in heap buffers — stamp checksums
-        //    in the heap buffer, then copy to mmap (both modes).
         if (self.env.writemap) {
-            var it = self.dirty_pages_wm.keyIterator();
-            while (it.next()) |pgno_ptr| {
+            var wm_it = self.dirty_pages_wm.keyIterator();
+            while (wm_it.next()) |pgno_ptr| {
                 const offset = @as(usize, pgno_ptr.*) * PAGE_SIZE;
                 const ph = @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.env.map.ptr + offset)));
                 const skip = (ph.flags & page_mod.P_LEAF2) != 0 or
@@ -391,8 +484,6 @@ pub const Transaction = struct {
                 if (!skip) ph.dupfix_ksize = page_mod.computePageChecksum(ph, PAGE_SIZE);
             }
         }
-        // Stamp and write dirty_list / spill_list pages (heap buffers) in all modes.
-        // Pages are written in ascending pgno order for sequential I/O performance.
         {
             const writePage = struct {
                 fn call(txn: *Transaction, pgno: u32, buf: []u8) !void {
@@ -413,9 +504,6 @@ pub const Transaction = struct {
                 }
             }.call;
 
-            // Collect all dirty pages (both lists) into a temporary array,
-            // sort by pgno, then write sequentially.  Sorting n<=SPILL_THRESHOLD
-            // pages is O(n log n) with n≤64 — effectively free.
             const PageEntry = struct { pgno: u32, buf: []u8 };
             var pages = std.ArrayListUnmanaged(PageEntry){};
             defer pages.deinit(self.allocator);
@@ -426,9 +514,7 @@ pub const Transaction = struct {
             while (sit.next()) |e|
                 try pages.append(self.allocator, .{ .pgno = e.key_ptr.*, .buf = e.value_ptr.* });
             std.sort.block(PageEntry, pages.items, {}, struct {
-                fn lt(_: void, a: PageEntry, b: PageEntry) bool {
-                    return a.pgno < b.pgno;
-                }
+                fn lt(_: void, a: PageEntry, b: PageEntry) bool { return a.pgno < b.pgno; }
             }.lt);
             for (pages.items) |p| try writePage(self, p.pgno, p.buf);
         }
@@ -781,7 +867,19 @@ pub const Transaction = struct {
     fn serializeFreedPages(self: *Transaction) !void {
         if (self.parent != null) return; // child txns merge into parent
 
-        while (self.freed_pages.items.len > 0 or self.committed_freed.items.len > 0) {
+        while (self.freed_pages.items.len > 0 or self.committed_freed.items.len > 0 or self.reclaimed_pages.items.len > 0) {
+            // Rescue any pages that were loaded from the GC tree (via loadGCBatch)
+            // but not used by this transaction.  loadGCBatch deletes the GC entry
+            // before returning, so any unused pages must be re-serialised here or
+            // they become permanent page leaks.  We fold them into freed_pages so
+            // the loop below writes them back to the GC tree.
+            if (self.reclaimed_pages.items.len > 0) {
+                try self.freed_pages.appendSlice(self.allocator, self.reclaimed_pages.items);
+                self.reclaimed_pages.clearRetainingCapacity();
+            }
+
+            if (self.freed_pages.items.len == 0 and self.committed_freed.items.len == 0) break;
+
             // Snapshot the current batch and clear freed_pages so that
             // btreePut/btreeDel inside this loop can accumulate new pages
             // without aliasing the list we're serialising.

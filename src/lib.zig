@@ -35,11 +35,15 @@ pub const Error     = types.Error;
 pub const Stat      = types.Stat;
 pub const EnvStat   = types.EnvStat;
 pub const Geometry  = types.Geometry;
-pub const CheckResult  = Environment.CheckResult;
-pub const SeekResult   = types.SeekResult;
-pub const ReaderInfo   = types.ReaderInfo;
-pub const TxnInfo      = types.TxnInfo;
-pub const GetExResult  = types.GetExResult;
+pub const CheckResult    = Environment.CheckResult;
+pub const SeekResult     = types.SeekResult;
+pub const ReaderInfo     = types.ReaderInfo;
+pub const TxnInfo        = types.TxnInfo;
+pub const GetExResult    = types.GetExResult;
+// Replication support
+pub const CapturedPage   = Transaction.CapturedPage;
+pub const CapturedCommit = Transaction.CapturedCommit;
+pub const ReplicatedPage = Environment.ReplicatedPage;
 
 // -------------------------------------------------------------------------
 // Integration tests

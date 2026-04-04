@@ -88,15 +88,38 @@ pub const Environment = struct {
         const rdonly     = flags.rdonly;
         const path_slice = path[0..path.len];
 
+        // Normalise to native separator so Windows APIs accept forward slashes.
+        var norm_buf: [std.fs.max_path_bytes:0]u8 = undefined;
+        @memcpy(norm_buf[0..path_slice.len], path_slice);
+        norm_buf[path_slice.len] = 0;
+        if (std.fs.path.sep != '/') {
+            for (norm_buf[0..path_slice.len]) |*c| {
+                if (c.* == '/') c.* = std.fs.path.sep;
+            }
+        }
+        const norm_slice = norm_buf[0..path_slice.len];
+
         const file: std.fs.File = blk: {
-            if (rdonly) {
-                break :blk try std.fs.cwd().openFile(path_slice, .{ .mode = .read_only });
+            if (std.fs.path.isAbsolute(norm_slice)) {
+                if (rdonly) {
+                    break :blk try std.fs.openFileAbsolute(norm_slice, .{ .mode = .read_only });
+                } else {
+                    break :blk try std.fs.createFileAbsolute(norm_slice, .{
+                        .read      = true,
+                        .truncate  = false,
+                        .exclusive = false,
+                    });
+                }
             } else {
-                break :blk try std.fs.cwd().createFile(path_slice, .{
-                    .read      = true,
-                    .truncate  = false,
-                    .exclusive = false,
-                });
+                if (rdonly) {
+                    break :blk try std.fs.cwd().openFile(norm_slice, .{ .mode = .read_only });
+                } else {
+                    break :blk try std.fs.cwd().createFile(norm_slice, .{
+                        .read      = true,
+                        .truncate  = false,
+                        .exclusive = false,
+                    });
+                }
             }
         };
         errdefer file.close();
@@ -115,6 +138,8 @@ pub const Environment = struct {
 
         var lock = if (flags.exclusive)
             lock_mod.LockManager.initExclusive()
+        else if (flags.server)
+            try lock_mod.LockManager.initServerMode(std.heap.page_allocator)
         else
             try lock_mod.LockManager.init(path_slice, std.heap.page_allocator);
         errdefer lock.deinit();
@@ -525,6 +550,53 @@ pub const Environment = struct {
 
         const copy_len = @as(usize, num_pages) * PAGE_SIZE;
         try dest.writeAll(self.map.ptr[0..copy_len]);
+    }
+
+    // ─── Replication ─────────────────────────────────────────────────────────
+
+    /// A replicated page received from the Raft leader.
+    pub const ReplicatedPage = struct {
+        pgno: u32,
+        /// Exactly PAGE_SIZE bytes of raw page data.
+        data: []const u8,
+    };
+
+    /// Apply a set of pages replicated from the Raft leader to this follower's
+    /// environment.  Called by the Raft apply loop after a log entry is committed.
+    ///
+    /// `pages` — the B-tree pages from CommitInfo (pgno + PAGE_SIZE bytes each).
+    /// `meta`  — PAGE_SIZE bytes: the leader's serialised meta for the next slot.
+    pub fn applyReplicatedCommit(
+        self:  *Environment,
+        pages: []const ReplicatedPage,
+        meta:  []const u8,
+    ) !void {
+        try self.lock.lockWriter();
+        defer self.lock.unlockWriter() catch {};
+
+        // Write every data page to the mmap, resizing if necessary.
+        for (pages) |p| {
+            const offset = @as(usize, p.pgno) * PAGE_SIZE;
+            if (offset + PAGE_SIZE > self.map.len) {
+                const needed = offset + PAGE_SIZE;
+                const new_size = if (self.map_full_fn) |fn_ptr|
+                    try fn_ptr(self, needed)
+                else
+                    needed;
+                try self.resize(new_size);
+            }
+            @memcpy(self.map.ptr[offset .. offset + PAGE_SIZE], p.data[0..PAGE_SIZE]);
+        }
+
+        // Write the leader's meta into the next ping-pong slot.
+        const next_slot: u8 = 1 - self.best_meta_idx;
+        const meta_offset = @as(usize, next_slot) * PAGE_SIZE;
+        if (meta_offset + PAGE_SIZE <= self.map.len and meta.len >= PAGE_SIZE) {
+            @memcpy(self.map.ptr[meta_offset .. meta_offset + PAGE_SIZE], meta[0..PAGE_SIZE]);
+        }
+
+        try self.map.sync();
+        self.best_meta_idx = next_slot;
     }
 
     // ─── Deep Audit ──────────────────────────────────────────────────────────
