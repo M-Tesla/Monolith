@@ -4,7 +4,7 @@
 // See the LICENSE file at the root of the project for the full text.
 //
 // SPDX-License-Identifier: MIT
-//! Transaction and Cursor — pure Zig, no C.
+//! Transaction and Cursor in pure Zig, no C.
 //! MVCC B-tree engine with a dirty-page list.
 //!
 //! Write strategy:
@@ -77,7 +77,7 @@ fn removeParentEntry(parent: *page_mod.PageHeader, ci: u16) !void {
         parent.delNode(0); // remove (k1, p_new) — now at index 0
         var buf: [4]u8 = undefined;
         std.mem.writeInt(u32, &buf, next_pgno, .little);
-        _ = try parent.putNode(0, "", &buf, 0); // reinsert as ("", p_new)
+        _ = parent.putNode(0, "", &buf, 0); // reinsert as ("", p_new)
     } else {
         parent.delNode(ci);
     }
@@ -220,13 +220,13 @@ pub const Transaction = struct {
                 .txnid = par.txnid,
                 .rdonly = rdonly,
                 .meta = par.meta,
-                .dirty_list = .{},
-                .spill_list = .{},
-                .shadow_list = .{},
-                .dirty_pages_wm = .{},
+                .dirty_list = .empty,
+                .spill_list = .empty,
+                .shadow_list = .empty,
+                .dirty_pages_wm = .empty,
                 .first_unallocated_snapshot = par.meta.geometry.first_unallocated,
-                .freed_pages = .{},
-                .committed_freed = .{},
+                .freed_pages = .empty,
+                .committed_freed = .empty,
                 .dbi_state = dbi_state,
                 .next_dbi = env.dbi_next,
                 .reader_slot = null,
@@ -234,7 +234,7 @@ pub const Transaction = struct {
                 .writer_held = false,
                 .allocator = alloc,
                 .overflow_buf = &.{},
-                .reclaimed_pages = .{},
+                .reclaimed_pages = .empty,
                 .loading_gc = false,
                 .nosync = flags.nosync,
             };
@@ -279,13 +279,13 @@ pub const Transaction = struct {
             .txnid = txnid,
             .rdonly = rdonly,
             .meta = best_meta.*,
-            .dirty_list = .{},
-            .spill_list = .{},
-            .shadow_list = .{},
-            .dirty_pages_wm = .{},
+            .dirty_list = .empty,
+            .spill_list = .empty,
+            .shadow_list = .empty,
+            .dirty_pages_wm = .empty,
             .first_unallocated_snapshot = best_meta.geometry.first_unallocated,
-            .freed_pages = .{},
-            .committed_freed = .{},
+            .freed_pages = .empty,
+            .committed_freed = .empty,
             .dbi_state = dbi_state,
             .next_dbi = env.dbi_next,
             .reader_slot = reader_slot,
@@ -293,7 +293,7 @@ pub const Transaction = struct {
             .writer_held = writer_held,
             .allocator = alloc,
             .overflow_buf = &.{},
-            .reclaimed_pages = .{},
+            .reclaimed_pages = .empty,
             .loading_gc = false,
             .nosync = flags.nosync,
         };
@@ -395,7 +395,7 @@ pub const Transaction = struct {
         /// Deep copies of every dirty B-tree page.
         pages: []CapturedPage,
         /// PAGE_SIZE bytes: serialised meta for the next ping-pong slot.
-        meta:  []u8,
+        meta: []u8,
         alloc: std.mem.Allocator,
 
         pub fn deinit(self: CapturedCommit) void {
@@ -462,7 +462,7 @@ pub const Transaction = struct {
         return .{
             .txnid = self.txnid,
             .pages = captured,
-            .meta  = meta_buf,
+            .meta = meta_buf,
             .alloc = alloc,
         };
     }
@@ -505,7 +505,7 @@ pub const Transaction = struct {
             }.call;
 
             const PageEntry = struct { pgno: u32, buf: []u8 };
-            var pages = std.ArrayListUnmanaged(PageEntry){};
+            var pages = std.ArrayListUnmanaged(PageEntry).empty;
             defer pages.deinit(self.allocator);
             var it = self.dirty_list.iterator();
             while (it.next()) |e|
@@ -514,7 +514,9 @@ pub const Transaction = struct {
             while (sit.next()) |e|
                 try pages.append(self.allocator, .{ .pgno = e.key_ptr.*, .buf = e.value_ptr.* });
             std.sort.block(PageEntry, pages.items, {}, struct {
-                fn lt(_: void, a: PageEntry, b: PageEntry) bool { return a.pgno < b.pgno; }
+                fn lt(_: void, a: PageEntry, b: PageEntry) bool {
+                    return a.pgno < b.pgno;
+                }
             }.lt);
             for (pages.items) |p| try writePage(self, p.pgno, p.buf);
         }
@@ -527,7 +529,7 @@ pub const Transaction = struct {
         m.txnid_b = self.txnid;
 
         // 6. Sync to disk (skipped in safe_nosync / nosync modes, or per-txn nosync override).
-        if (!self.env.skip_sync and !self.nosync) try self.env.map.sync();
+        if (!self.env.skip_sync and !self.nosync) self.env.map.sync();
         self.env.best_meta_idx = next_slot;
 
         // 7. Auto-shrink: truncate trailing over-allocated space if configured.
@@ -778,7 +780,7 @@ pub const Transaction = struct {
     fn trySpill(self: *Transaction) !void {
         if (self.dirty_list.count() <= SPILL_THRESHOLD) return;
         const target = self.dirty_list.count() / 2;
-        var to_move = std.ArrayListUnmanaged(u32){};
+        var to_move = std.ArrayListUnmanaged(u32).empty;
         defer to_move.deinit(self.allocator);
         var it = self.dirty_list.iterator();
         while (it.next()) |entry| {
@@ -884,7 +886,7 @@ pub const Transaction = struct {
             // btreePut/btreeDel inside this loop can accumulate new pages
             // without aliasing the list we're serialising.
             var snapshot = self.freed_pages;
-            self.freed_pages = .{};
+            self.freed_pages = .empty;
             defer snapshot.deinit(self.allocator);
 
             // Also include pages freed from committed state — they go to GC too.
@@ -1582,7 +1584,7 @@ pub const Transaction = struct {
                 const sz = nodeSz(key.len, inline_val.len);
 
                 if (cow.getFreeSpace() >= sz + 2) {
-                    const node = try cow.putNode(ins_idx, key, inline_val, node_flags);
+                    const node = cow.putNode(ins_idx, key, inline_val, node_flags);
                     if (data_shim_ov != 0) node.data_shim = data_shim_ov;
                     tree.items += 1;
                     tree.mod_txnid = self.txnid;
@@ -1697,7 +1699,7 @@ pub const Transaction = struct {
         @memset(tmp_buf, 0);
         const tmp = @as(*page_mod.PageHeader, @ptrCast(@alignCast(tmp_buf.ptr)));
         tmp.init(PAGE_SIZE, page_mod.P_LEAF);
-        try left.copyNodes(tmp, 0, split);
+        left.copyNodes(tmp, 0, split);
 
         // Allocate and populate right page with [split..n).
         const right_pgno = try self.allocPage();
@@ -1706,18 +1708,18 @@ pub const Transaction = struct {
         right.init(PAGE_SIZE, page_mod.P_LEAF);
         right.pgno = right_pgno;
         right.txnid = self.txnid;
-        try left.copyNodes(right, split, n - split);
+        left.copyNodes(right, split, n - split);
 
         // Rebuild left compactly from the temp buffer (init does not touch pgno).
         left.init(PAGE_SIZE, page_mod.P_LEAF);
         left.txnid = self.txnid;
-        try tmp.copyNodes(left, 0, split);
+        tmp.copyNodes(left, 0, split);
 
         // Insert the new key into whichever half owns its index.
         const put_result = if (ins_idx <= split)
-            try left.putNode(ins_idx, key, val, node_flags)
+            left.putNode(ins_idx, key, val, node_flags)
         else
-            try right.putNode(ins_idx - split, key, val, node_flags);
+            right.putNode(ins_idx - split, key, val, node_flags);
         // For overflow nodes, override data_shim with the logical value size.
         if (data_shim_override != 0) put_result.data_shim = data_shim_override;
 
@@ -1752,9 +1754,9 @@ pub const Transaction = struct {
 
             var buf: [4]u8 = undefined;
             std.mem.writeInt(u32, &buf, tree.root, .little);
-            _ = try root_page.putNode(0, "", &buf, 0); // leftmost entry has an empty key
+            _ = root_page.putNode(0, "", &buf, 0); // leftmost entry has an empty key
             std.mem.writeInt(u32, &buf, right_pgno, .little);
-            _ = try root_page.putNode(1, sep_key, &buf, 0);
+            _ = root_page.putNode(1, sep_key, &buf, 0);
 
             tree.root = root_pgno;
             tree.height += 1;
@@ -1772,7 +1774,7 @@ pub const Transaction = struct {
         const sz = nodeSz(sep_key.len, 4); // branch value = 4-byte pgno
 
         if (parent.getFreeSpace() >= sz + 2) {
-            _ = try parent.putNode(ins_ci, sep_key, &buf, 0);
+            _ = parent.putNode(ins_ci, sep_key, &buf, 0);
         } else {
             // Parent branch is also full: split recursively.
             try self.branchSplit(tree, parent, pe.pgno, ins_ci, sep_key, right_pgno, path[0 .. path.len - 1]);
@@ -1799,11 +1801,11 @@ pub const Transaction = struct {
         const tmp = @as(*page_mod.PageHeader, @ptrCast(@alignCast(tmp_buf.ptr)));
         tmp.init(PAGE_SIZE * 2, page_mod.P_BRANCH);
 
-        try left.copyNodes(tmp, 0, n);
+        left.copyNodes(tmp, 0, n);
 
         var pg_buf: [4]u8 = undefined;
         std.mem.writeInt(u32, &pg_buf, sep_pgno, .little);
-        _ = try tmp.putNode(ins_ci, sep_key, &pg_buf, 0);
+        _ = tmp.putNode(ins_ci, sep_key, &pg_buf, 0);
 
         const total: u16 = tmp.getNumEntries(); // n + 1
         const mid: u16 = @intCast(total / 2);
@@ -1821,7 +1823,7 @@ pub const Transaction = struct {
         left.init(PAGE_SIZE, page_mod.P_BRANCH);
         left.pgno = left_pgno;
         left.txnid = self.txnid;
-        try tmp.copyNodes(left, 0, mid);
+        tmp.copyNodes(left, 0, mid);
 
         // Build right: ("", promo_child) followed by tmp[mid+1..total).
         const right_pgno = try self.allocPage();
@@ -1832,10 +1834,10 @@ pub const Transaction = struct {
         right.txnid = self.txnid;
 
         std.mem.writeInt(u32, &pg_buf, promo_child, .little);
-        _ = try right.putNode(0, "", &pg_buf, 0);
+        _ = right.putNode(0, "", &pg_buf, 0);
 
         if (mid + 1 < total) {
-            try tmp.copyNodes(right, mid + 1, total - mid - 1);
+            tmp.copyNodes(right, mid + 1, total - mid - 1);
         }
 
         tree.branch_pages += 1;
@@ -1913,7 +1915,7 @@ pub const Transaction = struct {
             // Space needed in leaf to absorb right's contents.
             const right_need = (right.getUsedSpace() -| 20) + @as(u32, right_n) * 2;
             if (leaf.getFreeSpace() >= right_need) {
-                try right.copyNodes(leaf, 0, right_n);
+                right.copyNodes(leaf, 0, right_n);
                 parent.delNode(pe.ci + 1);
                 try self.freePage(right_pgno);
                 tree.leaf_pages -= 1;
@@ -1938,7 +1940,7 @@ pub const Transaction = struct {
                 if (lsib_wp.pgno != lsib_pgno) {
                     updateBranchChild(parent, pe.ci - 1, lsib_wp.pgno);
                 }
-                try leaf.copyNodes(lsib_cow, 0, leaf_n);
+                leaf.copyNodes(lsib_cow, 0, leaf_n);
                 try removeParentEntry(parent, pe.ci);
                 try self.freePage(leaf_pgno);
                 tree.leaf_pages -= 1;

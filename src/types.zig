@@ -139,11 +139,11 @@ pub const DbFlags = struct {
 // Transaction flags
 // ---------------------------------------------------------------------------
 pub const TxnFlags = struct {
-    rdonly:     bool = false,
+    rdonly: bool = false,
     /// Skip fsync on commit for this transaction only (per-txn nosync override).
-    nosync:     bool = false,
+    nosync: bool = false,
     /// Try to acquire the write lock without blocking; returns error.Busy if held.
-    try_begin:  bool = false,
+    try_begin: bool = false,
 };
 
 // ---------------------------------------------------------------------------
@@ -177,17 +177,17 @@ pub const KV = struct {
 // ---------------------------------------------------------------------------
 pub const Stat = struct {
     /// Page size in bytes
-    page_size:    u32,
+    page_size: u32,
     /// Height of the B-tree (1 = root is a leaf)
-    depth:        u16,
+    depth: u16,
     /// Number of internal (branch) pages
     branch_pages: u64,
     /// Number of leaf pages
-    leaf_pages:   u64,
+    leaf_pages: u64,
     /// Number of large (overflow) pages
-    large_pages:  u64,
+    large_pages: u64,
     /// Total number of key/value entries
-    items:        u64,
+    items: u64,
 };
 
 // ---------------------------------------------------------------------------
@@ -195,11 +195,11 @@ pub const Stat = struct {
 // ---------------------------------------------------------------------------
 pub const EnvStat = struct {
     /// Page size in bytes
-    page_size:       u32,
+    page_size: u32,
     /// Number of pages currently allocated (used or free)
-    total_pages:     u64,
+    total_pages: u64,
     /// Transaction ID of the last committed write transaction
-    last_txnid:      u64,
+    last_txnid: u64,
     /// Maximum pages allowed by the current geometry
     geo_upper_pages: u64,
 };
@@ -208,7 +208,7 @@ pub const EnvStat = struct {
 // SeekResult — result of cursor.seekRange() indicating exact or approximate match
 // ---------------------------------------------------------------------------
 pub const SeekResult = struct {
-    kv:    KV,
+    kv: KV,
     /// true if the cursor landed on an exact match for the search key;
     /// false if positioned on the first key strictly greater than the search key.
     exact: bool,
@@ -219,9 +219,9 @@ pub const SeekResult = struct {
 // ---------------------------------------------------------------------------
 pub const ReaderInfo = struct {
     slot_idx: u32,
-    pid:      u32,
-    tid:      u32,
-    txnid:    u64,
+    pid: u32,
+    tid: u32,
+    txnid: u64,
 };
 
 // ---------------------------------------------------------------------------
@@ -229,15 +229,15 @@ pub const ReaderInfo = struct {
 // ---------------------------------------------------------------------------
 pub const TxnInfo = struct {
     /// Bytes currently allocated in the map (first_unallocated * PAGE_SIZE).
-    space_used:    u64,
+    space_used: u64,
     /// Map upper-bound in bytes (0 = unlimited).
-    space_limit:   u64,
+    space_limit: u64,
     /// Bytes held by dirty (not yet committed) pages in this transaction.
-    space_dirty:   u64,
+    space_dirty: u64,
     /// Bytes held by pages freed in this transaction, waiting for GC.
     space_retired: u64,
     /// TxnID of the oldest active reader (0 if none / exclusive mode).
-    reader_txnid:  u64,
+    reader_txnid: u64,
 };
 
 // ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ pub const TxnInfo = struct {
 // ---------------------------------------------------------------------------
 pub const GetExResult = struct {
     /// The value associated with the key (first dup for DupSort DBIs).
-    val:   []const u8,
+    val: []const u8,
     /// Number of duplicate values for this key (always 1 for non-DupSort DBIs).
     count: usize,
 };

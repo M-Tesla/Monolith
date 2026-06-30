@@ -46,23 +46,26 @@ Page 4+   data pages
 ## Usage
 
 ```zig
-const monolith = @import("monolith");
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var env = try monolith.Environment.open("data.monolith", .{}, 16, 1 << 30, io);
+    defer env.close();
 
-var env = try monolith.Environment.open("data.monolith", .{}, 16, 1 << 30);
-defer env.close();
+    // Write
+    var txn = try monolith.Transaction.begin(&env, null, .{});
+    errdefer txn.abort();
+    const dbi = try txn.openDbi("users", .{ .create = true });
+    try txn.put(dbi, "alice", "admin", .{});
+    try txn.commit();
 
-// Write
-var txn = try monolith.Transaction.begin(&env, null, .{});
-errdefer txn.abort();
-const dbi = try txn.openDbi("users", .{ .create = true });
-try txn.put(dbi, "alice", "admin", .{});
-try txn.commit();
-
-// Read
-var rtxn = try monolith.Transaction.begin(&env, null, .{ .rdonly = true });
-defer rtxn.abort();
-const rdbi = try rtxn.openDbi("users", .{});
-const val = try rtxn.get(rdbi, "alice"); // ?[]const u8
+    // Read
+    var rtxn = try monolith.Transaction.begin(&env, null, .{
+        .rdonly = true,
+    });
+    defer rtxn.abort();
+    const rdbi = try rtxn.openDbi("users", .{});
+    const val = try rtxn.get(rdbi, "alice"); // ?[]const u8
+}
 ```
 
 ---
@@ -74,7 +77,14 @@ zig build
 zig test src/lib.zig
 ```
 
-Requires Zig 0.15.2.
+## Run basic example (located in src/examples)
+
+```bash
+zig build run-basic_example
+```
+
+Requires Zig 0.16.
+(Zig 0.17.0-dev.1099+7db2ef610 fully compatible).
 
 ---
 

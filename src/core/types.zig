@@ -72,14 +72,14 @@ pub const EnvFlags = packed struct {
 /// Database Flags (DBI)
 pub const DbFlags = packed struct {
     reversekey: bool = false, // 0x02
-    dupsort: bool = false,    // 0x04
+    dupsort: bool = false, // 0x04
     integerkey: bool = false, // 0x08
-    dupfixed: bool = false,   // 0x10
+    dupfixed: bool = false, // 0x10
     integerdup: bool = false, // 0x20
     reversedup: bool = false, // 0x40
-    create: bool = false,     // 0x40000 (monolith_CREATE) - Not really a DB flag persisted, but used in open
+    create: bool = false, // 0x40000 (monolith_CREATE) - Not really a DB flag persisted, but used in open
     _pad: u9 = 0,
-    
+
     pub fn toU16(self: DbFlags) u16 {
         var val: u16 = 0;
         if (self.reversekey) val |= 0x02;

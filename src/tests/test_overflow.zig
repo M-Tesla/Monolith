@@ -39,7 +39,7 @@ test "overflow: put and get value just above threshold (2049 bytes)" {
 
     // Allocate a large value (just above 2048 threshold).
     const val_len: usize = OVERFLOW_THRESHOLD + 1; // 2049
-    var payload = [_]u8{0} ** (OVERFLOW_THRESHOLD + 1);
+    var payload: [OVERFLOW_THRESHOLD + 1]u8 = @splat(0);
     makePayload(&payload, 42);
 
     {
@@ -319,7 +319,7 @@ test "overflow: mix of inline and overflow values in one DBI" {
     defer env.close();
 
     const n_inline = 100;
-    const n_large  = 10;
+    const n_large = 10;
 
     {
         var txn = try Transaction.begin(&env, null, .{});

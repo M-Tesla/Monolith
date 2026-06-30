@@ -22,46 +22,45 @@ pub const ReaderTable = extern struct {
 };
 
 pub const LockManager = struct {
-    file: std.fs.File,
+    file: std.Io.File,
     map: os.MmapRegion,
     table: *ReaderTable,
     allocator: std.mem.Allocator,
     /// When true all lock operations are no-ops (exclusive mode).
     /// In exclusive mode, reader-slot methods return early without touching self.table.
     exclusive: bool = false,
+    io: std.Io,
 
     /// Returns a no-op LockManager for exclusive mode.
     /// No .lck file is created; all lock/reader operations succeed immediately.
-    pub fn initExclusive() LockManager {
+    pub fn initExclusive(io: std.Io) LockManager {
         return LockManager{
-            .file      = undefined,
-            .map       = undefined,
-            .table     = undefined, // never accessed in exclusive mode
+            .file = undefined,
+            .map = undefined,
+            .table = undefined, // never accessed in exclusive mode
             .allocator = undefined,
             .exclusive = true,
+            .io = io,
         };
     }
 
-    pub fn init(path: []const u8, allocator: std.mem.Allocator) !LockManager {
+    pub fn init(io: std.Io, path: []const u8, allocator: std.mem.Allocator) !LockManager {
         // Lock file is the db path with "-lck" appended (e.g. "data.monolith-lck").
         const key_path = try std.fmt.allocPrint(allocator, "{s}-lck", .{path});
         defer allocator.free(key_path);
-        
-        var file = if (std.fs.path.isAbsolute(key_path))
-            try std.fs.createFileAbsolute(key_path, .{
-                .read = true, .truncate = false, .exclusive = false,
-            })
-        else
-            try std.fs.cwd().createFile(key_path, .{
-                .read = true, .truncate = false, .exclusive = false,
-            });
-        errdefer file.close();
-        
-        const size = try file.getEndPos();
+
+        var file = try std.Io.Dir.cwd().createFile(io, key_path, .{
+            .read = true,
+            .truncate = false,
+            .exclusive = false, // Open if exists
+        });
+        errdefer file.close(io);
+
+        const size = try file.length(io);
         const min_size = 4096;
 
         if (size < min_size) {
-            try file.setEndPos(min_size);
+            try file.setLength(io, min_size);
         }
 
         var region = try os.MmapRegion.init(file, min_size, false);
@@ -75,37 +74,32 @@ pub const LockManager = struct {
             // Clear slots
             @memset(@as([*]u8, @ptrCast(&table.slots[0]))[0..@sizeOf(@TypeOf(table.slots))], 0);
         }
-        
-        return LockManager{
-            .file = file,
-            .map = region,
-            .table = table,
-            .allocator = allocator,
-        };
+
+        return LockManager{ .file = file, .map = region, .table = table, .allocator = allocator, .io = io };
     }
 
     pub fn deinit(self: *LockManager) void {
         if (self.exclusive) return;
         self.map.deinit();
-        self.file.close();
+        self.file.close(self.io);
     }
 
     pub fn lockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
-        try os.lockFile(self.file, true, true);
+        try os.lockFile(self.io, self.file, true, true);
     }
 
     /// Non-blocking write lock attempt. Returns error.Busy if the lock is already held.
     pub fn tryLockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
-        os.lockFile(self.file, true, false) catch return error.Busy;
+        os.lockFile(self.io, self.file, true, false) catch return error.Busy;
     }
 
     pub fn unlockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
-        try os.unlockFile(self.file);
+        try os.unlockFile(self.io, self.file);
     }
-    
+
     // Returns slot index
     pub fn registerReader(self: *LockManager, txnid: u64) !usize {
         if (self.exclusive) return 0; // exclusive mode: single process, no slot needed
@@ -114,24 +108,24 @@ pub const LockManager = struct {
         if (try self.tryClaimSlot(txnid)) |idx| return idx;
         return error.ReaderSlotsFull;
     }
-    
+
     fn tryClaimSlot(self: *LockManager, txnid: u64) !?usize {
         var i: usize = 0;
         while (i < self.table.num_slots) : (i += 1) {
-             const slot = &self.table.slots[i];
-             const current_txnid = @atomicLoad(u64, &slot.txnid, .acquire);
-             if (current_txnid == 0) {
-                 const res = @atomicRmw(u64, &slot.txnid, .Xchg, txnid, .acq_rel);
-                 if (res == 0) {
-                     slot.pid = os.getCurrentProcessId();
-                     slot.tid = os.getCurrentThreadId();
-                     return i;
-                 }
-             }
+            const slot = &self.table.slots[i];
+            const current_txnid = @atomicLoad(u64, &slot.txnid, .acquire);
+            if (current_txnid == 0) {
+                const res = @atomicRmw(u64, &slot.txnid, .Xchg, txnid, .acq_rel);
+                if (res == 0) {
+                    slot.pid = os.getCurrentProcessId();
+                    slot.tid = os.getCurrentThreadId();
+                    return i;
+                }
+            }
         }
         return null;
     }
-    
+
     pub fn recoverDeadSlots(self: *LockManager) void {
         if (self.exclusive) return;
         var i: usize = 0;
@@ -175,19 +169,19 @@ pub const LockManager = struct {
         const slot = &self.table.slots[slot_idx];
         @atomicStore(u64, &slot.txnid, 0, .release);
     }
-    
+
     pub fn getOldestReader(self: *LockManager, limit_txnid: u64) u64 {
         if (self.exclusive) return limit_txnid; // no readers in exclusive mode
         var min_txnid = limit_txnid;
         var i: usize = 0;
-        
+
         while (i < self.table.num_slots) : (i += 1) {
-             const slot = &self.table.slots[i];
-             const txnid = @atomicLoad(u64, &slot.txnid, .acquire);
-             
-             if (txnid != 0 and txnid < min_txnid) {
-                 min_txnid = txnid;
-             }
+            const slot = &self.table.slots[i];
+            const txnid = @atomicLoad(u64, &slot.txnid, .acquire);
+
+            if (txnid != 0 and txnid < min_txnid) {
+                min_txnid = txnid;
+            }
         }
         return min_txnid;
     }

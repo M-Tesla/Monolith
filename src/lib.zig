@@ -20,28 +20,28 @@
 
 pub const Environment = @import("env.zig").Environment;
 pub const Transaction = @import("txn.zig").Transaction;
-pub const Cursor      = @import("cursor.zig").Cursor;
-pub const types       = @import("types.zig");
-pub const limits      = @import("limits.zig");
+pub const Cursor = @import("cursor.zig").Cursor;
+pub const types = @import("types.zig");
+pub const limits = @import("limits.zig");
 
 // Convenience re-exports (avoids writing `monolith.types.EnvFlags`)
-pub const EnvFlags  = types.EnvFlags;
-pub const DbFlags   = types.DbFlags;
-pub const TxnFlags  = types.TxnFlags;
-pub const PutFlags  = types.PutFlags;
-pub const Dbi       = types.Dbi;
-pub const KV        = types.KV;
-pub const Error     = types.Error;
-pub const Stat      = types.Stat;
-pub const EnvStat   = types.EnvStat;
-pub const Geometry  = types.Geometry;
-pub const CheckResult    = Environment.CheckResult;
-pub const SeekResult     = types.SeekResult;
-pub const ReaderInfo     = types.ReaderInfo;
-pub const TxnInfo        = types.TxnInfo;
-pub const GetExResult    = types.GetExResult;
+pub const EnvFlags = types.EnvFlags;
+pub const DbFlags = types.DbFlags;
+pub const TxnFlags = types.TxnFlags;
+pub const PutFlags = types.PutFlags;
+pub const Dbi = types.Dbi;
+pub const KV = types.KV;
+pub const Error = types.Error;
+pub const Stat = types.Stat;
+pub const EnvStat = types.EnvStat;
+pub const Geometry = types.Geometry;
+pub const CheckResult = Environment.CheckResult;
+pub const SeekResult = types.SeekResult;
+pub const ReaderInfo = types.ReaderInfo;
+pub const TxnInfo = types.TxnInfo;
+pub const GetExResult = types.GetExResult;
 // Replication support
-pub const CapturedPage   = Transaction.CapturedPage;
+pub const CapturedPage = Transaction.CapturedPage;
 pub const CapturedCommit = Transaction.CapturedCommit;
 pub const ReplicatedPage = Environment.ReplicatedPage;
 

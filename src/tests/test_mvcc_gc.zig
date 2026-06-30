@@ -8,12 +8,12 @@
 //! holds a snapshot of the transaction that freed them.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_mvcc_gc.monolith";
 
 test "mvcc_gc: freed pages not reused while reader active" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
+    defer std.fs.cwd().deleteFile(PATH) catch {};
     defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
 
     var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
@@ -30,7 +30,8 @@ test "mvcc_gc: freed pages not reused while reader active" {
             var k: [8]u8 = undefined;
             std.mem.writeInt(u32, k[0..4], i, .little);
             std.mem.writeInt(u32, k[4..8], 0, .little);
-            try txn.put(dbi, &k, "v" ** 60, .{});
+            const v: [60]u8 = @splat('v');
+            try txn.put(dbi, &k, v, .{});
         }
         // Delete all to free the leaf pages.
         i = 0;
@@ -64,7 +65,8 @@ test "mvcc_gc: freed pages not reused while reader active" {
             var k: [8]u8 = undefined;
             std.mem.writeInt(u32, k[0..4], i, .little);
             std.mem.writeInt(u32, k[4..8], 0, .little);
-            try txn.put(dbi, &k, "x" ** 60, .{});
+            const x: [60]u8 = @splat('x');
+            try txn.put(dbi, &k, x, .{});
         }
         try txn.commit();
     }
@@ -97,7 +99,8 @@ test "mvcc_gc: freed pages not reused while reader active" {
             var k: [8]u8 = undefined;
             std.mem.writeInt(u32, k[0..4], i, .little);
             std.mem.writeInt(u32, k[4..8], 0, .little);
-            try txn.put(dbi, &k, "x" ** 60, .{});
+            const x: [60]u8 = @splat('x');
+            try txn.put(dbi, &k, x, .{});
         }
         try txn.commit();
 
@@ -112,7 +115,7 @@ test "mvcc_gc: freed pages not reused while reader active" {
 }
 
 test "mvcc_gc: GC tree survives reopen" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
+    defer std.fs.cwd().deleteFile(PATH) catch {};
     defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
 
     var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
@@ -127,7 +130,8 @@ test "mvcc_gc: GC tree survives reopen" {
         while (i < 300) : (i += 1) {
             var k: [4]u8 = undefined;
             std.mem.writeInt(u32, &k, i, .little);
-            try txn.put(dbi, &k, "v" ** 40, .{});
+            const v: [40]u8 = @splat('v');
+            try txn.put(dbi, &k, v, .{});
         }
         i = 0;
         while (i < 300) : (i += 1) {
