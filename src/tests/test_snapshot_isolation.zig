@@ -10,22 +10,22 @@
 //! immutable snapshot of the B-tree, even while writers are modifying it.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_snapshot_isolation.monolith";
 
 fn cleanup() void {
-    std.fs.cwd().deleteFile(PATH)         catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 }
 
-
-
 test "snapshot_isolation: reader sees pre-write snapshot" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     // T1: insert initial data.
@@ -50,7 +50,7 @@ test "snapshot_isolation: reader sees pre-write snapshot" {
         const dbi = try txn.openDbi("data", .{ .create = true });
         try txn.put(dbi, "key1", "val_after", .{});
         try txn.put(dbi, "key2", "val_after", .{});
-        try txn.put(dbi, "key3", "val_new",   .{});
+        try txn.put(dbi, "key3", "val_new", .{});
         try txn.commit();
     }
 
@@ -67,12 +67,12 @@ test "snapshot_isolation: reader sees pre-write snapshot" {
     try std.testing.expect(v3 == null);
 }
 
-
 test "snapshot_isolation: new reader sees latest commit" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -106,13 +106,12 @@ test "snapshot_isolation: new reader sees latest commit" {
     try std.testing.expect(try r2.get(dbi2, "key2") != null);
 }
 
-
-
 test "snapshot_isolation: all keys visible after multi-txn writes" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024, io);
     defer env.close();
 
     const ROUNDS = 10;
@@ -150,13 +149,12 @@ test "snapshot_isolation: all keys visible after multi-txn writes" {
     }
 }
 
-
-
 test "snapshot_isolation: branch path-copy preserves snapshot" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024, io);
     defer env.close();
 
     // T1: 300 entries — forces multi-level B-tree.

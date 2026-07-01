@@ -242,7 +242,9 @@ pub fn isProcessAlive(pid: u32) bool {
         if (rc != 0) return exit_code == STILL_ACTIVE;
         return false;
     } else {
-        std.posix.kill(@intCast(pid), @enumFromInt(0)) catch |err| {
+        const posix_pid = std.math.cast(std.posix.pid_t, pid) orelse return false;
+
+        std.posix.kill(posix_pid, @enumFromInt(0)) catch |err| {
             return err == error.PermissionDenied; // process exists, no signal permission
         };
         return true;
@@ -272,12 +274,15 @@ extern "kernel32" fn GetCurrentThreadId() callconv(WINAPI) u32;
 
 test "Mmap Basic" {
     const io = std.testing.io;
+    const all = std.testing.allocator;
+
+    const cwd = std.Io.Dir.cwd();
     const tmp_path = "test_mmap.dat";
 
     var file = try std.Io.Dir.cwd().createFile(io, tmp_path, .{ .read = true, .truncate = true });
     defer {
         file.close(io);
-        std.Io.Dir.cwd().deleteFile(io, tmp_path) catch {};
+        cwd.deleteFile(io, tmp_path) catch {};
     }
 
     try file.setLength(io, 4096);
@@ -289,12 +294,15 @@ test "Mmap Basic" {
     slice[0] = 0xAA;
     slice[4095] = 0xBB;
     region.sync();
-    try file.seekTo(io, 0);
+    var writer_buf: [4096]u8 = undefined;
+    const writer = file.writer(io, &writer_buf);
+    var w = writer;
+    try w.seekTo(0);
 
-    var buf: [1]u8 = undefined;
-    _ = try file.read(io, &buf);
+    const content: []u8 = try cwd.readFileAlloc(io, tmp_path, all, std.Io.Limit.unlimited);
+    defer all.free(content);
 
-    try std.testing.expectEqual(@as(u8, 0xAA), buf[0]);
+    try std.testing.expectEqual(@as(u8, 0xAA), content[0]);
 }
 
 test "isProcessAlive" {

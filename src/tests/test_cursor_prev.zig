@@ -14,10 +14,11 @@ const PATH = "test_cursor_prev.monolith";
 // ─── Plain B-tree backward iteration ─────────────────────────────────────────
 
 test "cursor_prev: backward iteration over plain keys" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     // Insert keys "k00".."k09"
@@ -66,10 +67,11 @@ test "cursor_prev: backward iteration over plain keys" {
 }
 
 test "cursor_prev: forward then backward round-trip" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -114,10 +116,11 @@ test "cursor_prev: forward then backward round-trip" {
 // ─── DupSort backward ─────────────────────────────────────────────────────────
 
 test "cursor_prev: prevDup iterates backward within dup-key" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -159,10 +162,11 @@ test "cursor_prev: prevDup iterates backward within dup-key" {
 }
 
 test "cursor_prev: firstDup and lastDup reposition correctly" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -201,10 +205,11 @@ test "cursor_prev: firstDup and lastDup reposition correctly" {
 }
 
 test "cursor_prev: prevDup stops at key boundary" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -242,10 +247,11 @@ test "cursor_prev: prevDup stops at key boundary" {
 }
 
 test "cursor_prev: single entry prev() returns null" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {

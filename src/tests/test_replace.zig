@@ -7,17 +7,18 @@
 //! txn.replace(), txn.putMultiple(), cursor.put(current).
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_replace.monolith";
 
 // ─── txn.replace ─────────────────────────────────────────────────────────────
 
 test "replace: returns old value and writes new" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -43,10 +44,11 @@ test "replace: returns old value and writes new" {
 }
 
 test "replace: missing key sets old to null and inserts new" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});
@@ -63,10 +65,11 @@ test "replace: missing key sets old to null and inserts new" {
 // ─── txn.putMultiple ─────────────────────────────────────────────────────────
 
 test "putMultiple: inserts several dup values in one call" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024, io);
     defer env.close();
 
     const vals = [_][]const u8{ "alpha", "beta", "gamma" };
@@ -91,10 +94,11 @@ test "putMultiple: inserts several dup values in one call" {
 // ─── cursor.put(current) ─────────────────────────────────────────────────────
 
 test "cursor.put(current): overwrites value at cursor position" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024, io);
     defer env.close();
 
     {

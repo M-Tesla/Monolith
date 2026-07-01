@@ -6,22 +6,24 @@
 // SPDX-License-Identifier: MIT
 /// Tests for accede flag — open DBI without specifying flags (Fase 36).
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH: [:0]const u8 = "test_accede.monolith";
 
 fn cleanup() void {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 }
 
 test "accede: reopens dupsort DBI without specifying flags" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
     // Create a dupsort DBI.
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -33,7 +35,7 @@ test "accede: reopens dupsort DBI without specifying flags" {
 
     // Reopen with accede=true — must NOT return error.Incompatible.
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();
@@ -46,12 +48,13 @@ test "accede: reopens dupsort DBI without specifying flags" {
 }
 
 test "accede: without accede flag, mismatched flags return Incompatible" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
     // Create with dupsort.
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -62,7 +65,7 @@ test "accede: without accede flag, mismatched flags return Incompatible" {
 
     // Reopen without dupsort flag and without accede → must fail.
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();
@@ -72,11 +75,12 @@ test "accede: without accede flag, mismatched flags return Incompatible" {
 }
 
 test "accede: works for plain (non-dupsort) DBI too" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -86,7 +90,7 @@ test "accede: works for plain (non-dupsort) DBI too" {
     }
 
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 16, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();

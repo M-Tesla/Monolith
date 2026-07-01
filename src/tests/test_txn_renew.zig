@@ -7,17 +7,18 @@
 //! txn.renew() — reuse a read-only transaction object to see a newer snapshot.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_txn_renew.monolith";
 
 test "txn_renew: sees data written after the first read" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20, io);
     defer env.close();
 
     // Seed.
@@ -61,12 +62,13 @@ test "txn_renew: sees data written after the first read" {
 }
 
 test "txn_renew: renew fails on write transaction" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});
@@ -77,12 +79,13 @@ test "txn_renew: renew fails on write transaction" {
 }
 
 test "txn_renew: multiple renewals converge to latest snapshot" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20, io);
     defer env.close();
 
     // Seed.

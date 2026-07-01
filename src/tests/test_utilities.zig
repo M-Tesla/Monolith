@@ -17,11 +17,12 @@ const Transaction = monolith.Transaction;
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "sequence: increments and returns old value" {
+    const io = std.testing.io;
     const path = "test_seq_basic.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try Transaction.begin(&env, null, .{});
@@ -44,12 +45,13 @@ test "sequence: increments and returns old value" {
 }
 
 test "sequence: persists across commit and reopen" {
+    const io = std.testing.io;
     const path = "test_seq_persist.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
     {
-        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
         defer env.close();
 
         var txn = try Transaction.begin(&env, null, .{});
@@ -60,7 +62,7 @@ test "sequence: persists across commit and reopen" {
     }
 
     {
-        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
         defer env.close();
 
         var txn = try Transaction.begin(&env, null, .{});
@@ -72,12 +74,13 @@ test "sequence: persists across commit and reopen" {
 }
 
 test "sequence: read-only transaction cannot increment" {
+    const io = std.testing.io;
     const path = "test_seq_rdonly.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
     {
-        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try Transaction.begin(&env, null, .{});
         defer txn.abort();
@@ -86,7 +89,7 @@ test "sequence: read-only transaction cannot increment" {
         try txn.commit();
     }
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var rtxn = try Transaction.begin(&env, null, .{ .rdonly = true });
@@ -105,11 +108,12 @@ test "sequence: read-only transaction cannot increment" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "dbiStat: reflects items after insertions" {
+    const io = std.testing.io;
     const path = "test_dbistat.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try Transaction.begin(&env, null, .{});
@@ -133,11 +137,12 @@ test "dbiStat: reflects items after insertions" {
 }
 
 test "envStat: reports correct page count and txnid" {
+    const io = std.testing.io;
     const path = "test_envstat.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -153,8 +158,8 @@ test "envStat: reports correct page count and txnid" {
 
     const es = txn.envStat();
     try std.testing.expectEqual(@as(u32, 4096), es.page_size);
-    try std.testing.expect(es.total_pages >= 4);   // at least the 4 init pages
-    try std.testing.expect(es.last_txnid >= 2);    // at least 2 commits happened
+    try std.testing.expect(es.total_pages >= 4); // at least the 4 init pages
+    try std.testing.expect(es.last_txnid >= 2); // at least 2 commits happened
     try std.testing.expect(es.geo_upper_pages > 0);
 }
 
@@ -163,16 +168,17 @@ test "envStat: reports correct page count and txnid" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "copy: backup file is a valid database" {
-    const src  = "test_copy_src.monolith";
+    const io = std.testing.io;
+    const src = "test_copy_src.monolith";
     const dest = "test_copy_dst.monolith";
-    defer std.fs.cwd().deleteFile(src)  catch {};
-    defer std.fs.cwd().deleteFile(src  ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(dest) catch {};
-    defer std.fs.cwd().deleteFile(dest ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, src) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, src ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, dest) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, dest ++ "-lck") catch {};
 
     // Write some data.
     {
-        var env = try Environment.open(src, .{}, 4, 4 * 1024 * 1024);
+        var env = try Environment.open(src, .{}, 4, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try Transaction.begin(&env, null, .{});
         defer txn.abort();
@@ -186,7 +192,7 @@ test "copy: backup file is a valid database" {
 
     // Open the backup and verify data integrity.
     {
-        var env2 = try Environment.open(dest, .{}, 4, 4 * 1024 * 1024);
+        var env2 = try Environment.open(dest, .{}, 4, 4 * 1024 * 1024, io);
         defer env2.close();
         var txn2 = try Transaction.begin(&env2, null, .{ .rdonly = true });
         defer txn2.abort();
@@ -198,14 +204,15 @@ test "copy: backup file is a valid database" {
 }
 
 test "copy: backup size equals source allocated pages" {
-    const src  = "test_copy_size_src.monolith";
+    const io = std.testing.io;
+    const src = "test_copy_size_src.monolith";
     const dest = "test_copy_size_dst.monolith";
-    defer std.fs.cwd().deleteFile(src)  catch {};
-    defer std.fs.cwd().deleteFile(src  ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(dest) catch {};
-    defer std.fs.cwd().deleteFile(dest ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, src) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, src ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, dest) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, dest ++ "-lck") catch {};
 
-    var env = try Environment.open(src, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(src, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try Transaction.begin(&env, null, .{});
@@ -217,9 +224,9 @@ test "copy: backup size equals source allocated pages" {
     const num_pages = env.bestMeta().geometry.first_unallocated;
     try env.copy(dest);
 
-    const dest_file = try std.fs.cwd().openFile(dest, .{});
-    defer dest_file.close();
-    const dest_size = try dest_file.getEndPos();
+    const dest_file = try std.Io.Dir.cwd().openFile(io, dest, .{});
+    defer dest_file.close(io);
+    const dest_size = try dest_file.length(io);
 
     try std.testing.expectEqual(@as(u64, num_pages) * 4096, dest_size);
 }
@@ -229,11 +236,12 @@ test "copy: backup size equals source allocated pages" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "check: fresh database has zero errors" {
+    const io = std.testing.io;
     const path = "test_check_fresh.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     const result = env.check();
@@ -242,11 +250,12 @@ test "check: fresh database has zero errors" {
 }
 
 test "check: database with data has zero errors" {
+    const io = std.testing.io;
     const path = "test_check_data.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     // Insert enough data to cause page splits.

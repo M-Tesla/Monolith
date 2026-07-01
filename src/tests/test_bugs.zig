@@ -12,13 +12,14 @@ const m   = @import("../lib.zig");
 const PATH = "test_bugs.monolith";
 
 test "bug2: tree depth guard returns TreeTooDeep" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     // Use a tiny map so splits happen quickly, building tree depth.
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});
@@ -40,12 +41,13 @@ test "bug2: tree depth guard returns TreeTooDeep" {
 }
 
 test "bug2: tree depth guard on integerkey" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});

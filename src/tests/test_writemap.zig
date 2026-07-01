@@ -8,19 +8,20 @@
 //! heap-allocated buffers. Abort must revert in-place mmap writes.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_writemap.monolith";
 
 test "writemap: basic CRUD survives commit and reopen" {
+    const io = std.testing.io;
     // Clean up any leftover files from a previous crashed run.
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     {
-        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20, io);
         defer env.close();
 
         var txn = try m.Transaction.begin(&env, null, .{});
@@ -28,13 +29,13 @@ test "writemap: basic CRUD survives commit and reopen" {
         const dbi = try txn.openDbi("wm", .{ .create = true });
 
         try txn.put(dbi, "alpha", "AAA", .{});
-        try txn.put(dbi, "beta",  "BBB", .{});
+        try txn.put(dbi, "beta", "BBB", .{});
         try txn.put(dbi, "gamma", "CCC", .{});
         try txn.commit();
     }
 
     {
-        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20, io);
         defer env.close();
 
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
@@ -56,15 +57,16 @@ test "writemap: basic CRUD survives commit and reopen" {
 }
 
 test "writemap: abort reverts writes" {
+    const io = std.testing.io;
     // Clean up any leftover files from a previous crashed run.
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     // Seed the DB.
     {
-        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -75,7 +77,7 @@ test "writemap: abort reverts writes" {
 
     // Overwrite in a transaction and abort.
     {
-        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         const dbi = try txn.openDbi("wm", .{});
@@ -95,15 +97,16 @@ test "writemap: abort reverts writes" {
 }
 
 test "writemap: large write forces mmap growth" {
+    const io = std.testing.io;
     // Clean up any leftover files from a previous crashed run.
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     const N = 5_000;
     {
-        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -118,7 +121,7 @@ test "writemap: large write forces mmap growth" {
     }
 
     {
-        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .writemap = true }, 16, 1 << 20, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();

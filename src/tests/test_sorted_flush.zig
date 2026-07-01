@@ -8,20 +8,22 @@
 /// The sort is an internal optimisation — observable behaviour is identical.
 /// Tests verify correctness under workloads that exercise multi-page commits.
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH: [:0]const u8 = "test_sorted_flush.monolith";
 
 fn cleanup() void {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 }
 
 test "sorted_flush: large commit writes all pages correctly" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024, io);
     defer env.close();
 
     // Insert enough keys to produce many dirty pages, forcing the sort path.
@@ -40,7 +42,7 @@ test "sorted_flush: large commit writes all pages correctly" {
 
     // Reopen and verify all 500 keys are readable.
     {
-        var env2 = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024);
+        var env2 = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024, io);
         defer env2.close();
         var txn = try m.Transaction.begin(&env2, null, .{ .rdonly = true });
         defer txn.abort();
@@ -57,10 +59,11 @@ test "sorted_flush: large commit writes all pages correctly" {
 }
 
 test "sorted_flush: interleaved inserts and deletes preserve order" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{}, 16, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 16, 16 * 1024 * 1024, io);
     defer env.close();
 
     // Alternating insert/delete across many transactions exercises

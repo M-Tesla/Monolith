@@ -12,12 +12,13 @@ const m   = @import("../lib.zig");
 const PATH = "test_alldups_appenddup.monolith";
 
 test "alldups: replaces all dups with a single new value" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     {
@@ -57,12 +58,13 @@ test "alldups: replaces all dups with a single new value" {
 }
 
 test "alldups: works when key has a single dup" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     {
@@ -91,12 +93,13 @@ test "alldups: works when key has a single dup" {
 }
 
 test "appenddup: bulk inserts in sorted order" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     {
@@ -123,12 +126,13 @@ test "appenddup: bulk inserts in sorted order" {
 }
 
 test "appenddup: mixed append and normal put" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     {

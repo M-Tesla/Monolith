@@ -15,20 +15,21 @@ const PATH = "test_reversekey.monolith";
 // ─── ReverseKey ───────────────────────────────────────────────────────────────
 
 test "reversekey: cursor yields descending order" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
         const dbi = try txn.openDbi("rev", .{ .create = true, .reversekey = true });
-        try txn.put(dbi, "apple",  "1", .{});
+        try txn.put(dbi, "apple", "1", .{});
         try txn.put(dbi, "banana", "2", .{});
         try txn.put(dbi, "cherry", "3", .{});
-        try txn.put(dbi, "date",   "4", .{});
+        try txn.put(dbi, "date", "4", .{});
         try txn.commit();
     }
 
@@ -50,10 +51,11 @@ test "reversekey: cursor yields descending order" {
 }
 
 test "reversekey: last() positions on smallest key" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -83,10 +85,11 @@ test "reversekey: last() positions on smallest key" {
 }
 
 test "reversekey: get exact key works" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -111,10 +114,11 @@ test "reversekey: get exact key works" {
 }
 
 test "reversekey: backward iteration (prev) works" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -153,10 +157,11 @@ test "reversekey: backward iteration (prev) works" {
 // ─── IntegerKey ───────────────────────────────────────────────────────────────
 
 test "integerkey: u32 keys sorted numerically" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -197,10 +202,11 @@ test "integerkey: u32 keys sorted numerically" {
 }
 
 test "integerkey: get exact u32 key" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {

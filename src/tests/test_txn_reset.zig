@@ -7,17 +7,18 @@
 //! txn.reset() and reset+renew cycle.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_txn_reset.monolith";
 
 test "txn_reset: reset+renew sees latest snapshot" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     // Seed.
@@ -61,12 +62,13 @@ test "txn_reset: reset+renew sees latest snapshot" {
 }
 
 test "txn_reset: double reset is safe" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     var rtxn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
@@ -78,12 +80,13 @@ test "txn_reset: double reset is safe" {
 }
 
 test "txn_reset: reset on write txn is a no-op" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});
@@ -98,12 +101,13 @@ test "txn_reset: reset on write txn is a no-op" {
 }
 
 test "txn_reset: reset+renew loop" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     {

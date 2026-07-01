@@ -7,20 +7,21 @@
 //! env.copyCompact() — compacting backup.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
-const PATH    = "test_compact_src.monolith";
+const PATH = "test_compact_src.monolith";
 const COMPACT = "test_compact_dst.monolith";
 
 test "copyCompact: all live keys readable after compact" {
-    defer std.fs.cwd().deleteFile(PATH)            catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck")  catch {};
-    defer std.fs.cwd().deleteFile(COMPACT)         catch {};
-    defer std.fs.cwd().deleteFile(COMPACT ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, COMPACT) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, COMPACT ++ "-lck") catch {};
 
     // 1. Insert 500 keys, then delete 250.
     {
-        var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
         errdefer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -44,7 +45,7 @@ test "copyCompact: all live keys readable after compact" {
 
     // 2. Compact.
     {
-        var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();
@@ -53,19 +54,19 @@ test "copyCompact: all live keys readable after compact" {
 
     // 3. Compact file must be smaller than the original.
     const src_size = blk: {
-        const f = try std.fs.cwd().openFile(PATH, .{});
-        defer f.close();
-        break :blk try f.getEndPos();
+        const f = try std.Io.Dir.cwd().openFile(io, PATH, .{});
+        defer f.close(io);
+        break :blk try f.length(io);
     };
     const dst_size = blk: {
-        const f = try std.fs.cwd().openFile(COMPACT, .{});
-        defer f.close();
-        break :blk try f.getEndPos();
+        const f = try std.Io.Dir.cwd().openFile(io, COMPACT, .{});
+        defer f.close(io);
+        break :blk try f.length(io);
     };
     try std.testing.expect(dst_size < src_size);
 
     // 4. Open compact file and verify all 250 even keys are present.
-    var env2 = try m.Environment.open(COMPACT, .{}, 4, 32 * 1024 * 1024);
+    var env2 = try m.Environment.open(COMPACT, .{}, 4, 32 * 1024 * 1024, io);
     defer env2.close();
     var txn2 = try m.Transaction.begin(&env2, null, .{ .rdonly = true });
     defer txn2.abort();
@@ -89,18 +90,19 @@ test "copyCompact: all live keys readable after compact" {
 }
 
 test "copyCompact: multiple DBIs all copied correctly" {
-    defer std.fs.cwd().deleteFile(PATH)            catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck")  catch {};
-    defer std.fs.cwd().deleteFile(COMPACT)         catch {};
-    defer std.fs.cwd().deleteFile(COMPACT ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, COMPACT) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, COMPACT ++ "-lck") catch {};
 
     {
-        var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024, io);
         errdefer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
         const dbi_a = try txn.openDbi("alpha", .{ .create = true });
-        const dbi_b = try txn.openDbi("beta",  .{ .create = true });
+        const dbi_b = try txn.openDbi("beta", .{ .create = true });
         try txn.put(dbi_a, "x", "1", .{});
         try txn.put(dbi_a, "y", "2", .{});
         try txn.put(dbi_b, "p", "A", .{});
@@ -110,14 +112,14 @@ test "copyCompact: multiple DBIs all copied correctly" {
     }
 
     {
-        var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();
         try txn.copyCompact(COMPACT);
     }
 
-    var env2 = try m.Environment.open(COMPACT, .{}, 8, 16 * 1024 * 1024);
+    var env2 = try m.Environment.open(COMPACT, .{}, 8, 16 * 1024 * 1024, io);
     defer env2.close();
     var txn2 = try m.Transaction.begin(&env2, null, .{ .rdonly = true });
     defer txn2.abort();

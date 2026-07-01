@@ -12,18 +12,20 @@ const m = @import("../lib.zig");
 const PATH = "test_basic.monolith";
 
 test "Environment: open e close" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     env.close();
 }
 
 test "Transaction: write e read simples" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     // Write txn — create DBI and insert a value
@@ -49,10 +51,11 @@ test "Transaction: write e read simples" {
 }
 
 test "Transaction: get of nonexistent key returns null" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -71,10 +74,11 @@ test "Transaction: get of nonexistent key returns null" {
 }
 
 test "Transaction: del removes key" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -94,10 +98,11 @@ test "Transaction: del removes key" {
 }
 
 test "Cursor: iteração completa" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     // Insert 3 keys

@@ -13,10 +13,11 @@ const m = @import("../lib.zig");
 const PATH = "test_mvcc_gc.monolith";
 
 test "mvcc_gc: freed pages not reused while reader active" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     // ── T1: insert + delete to create freed pages ──────────────────────────
@@ -31,7 +32,7 @@ test "mvcc_gc: freed pages not reused while reader active" {
             std.mem.writeInt(u32, k[0..4], i, .little);
             std.mem.writeInt(u32, k[4..8], 0, .little);
             const v: [60]u8 = @splat('v');
-            try txn.put(dbi, &k, v, .{});
+            try txn.put(dbi, &k, &v, .{});
         }
         // Delete all to free the leaf pages.
         i = 0;
@@ -66,7 +67,7 @@ test "mvcc_gc: freed pages not reused while reader active" {
             std.mem.writeInt(u32, k[0..4], i, .little);
             std.mem.writeInt(u32, k[4..8], 0, .little);
             const x: [60]u8 = @splat('x');
-            try txn.put(dbi, &k, x, .{});
+            try txn.put(dbi, &k, &x, .{});
         }
         try txn.commit();
     }
@@ -100,7 +101,7 @@ test "mvcc_gc: freed pages not reused while reader active" {
             std.mem.writeInt(u32, k[0..4], i, .little);
             std.mem.writeInt(u32, k[4..8], 0, .little);
             const x: [60]u8 = @splat('x');
-            try txn.put(dbi, &k, x, .{});
+            try txn.put(dbi, &k, &x, .{});
         }
         try txn.commit();
 
@@ -115,10 +116,11 @@ test "mvcc_gc: freed pages not reused while reader active" {
 }
 
 test "mvcc_gc: GC tree survives reopen" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
 
     // Insert enough items to force page splits (>~75 items per page @ 54 bytes/item),
     // then delete all so the rebalancer frees the extra leaf pages → freed_pages → GC tree.
@@ -131,7 +133,7 @@ test "mvcc_gc: GC tree survives reopen" {
             var k: [4]u8 = undefined;
             std.mem.writeInt(u32, &k, i, .little);
             const v: [40]u8 = @splat('v');
-            try txn.put(dbi, &k, v, .{});
+            try txn.put(dbi, &k, &v, .{});
         }
         i = 0;
         while (i < 300) : (i += 1) {
@@ -144,7 +146,7 @@ test "mvcc_gc: GC tree survives reopen" {
     env.close();
 
     // Reopen — GC tree should still be intact.
-    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env2.close();
 
     {

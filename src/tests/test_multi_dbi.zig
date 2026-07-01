@@ -13,10 +13,11 @@ const m = @import("../lib.zig");
 const PATH = "test_multi_dbi.monolith";
 
 test "multi_dbi: 3 distinct DBIs in the same file" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024, io);
     defer env.close();
 
     // Setup: create 3 DBIs in a write txn
@@ -24,9 +25,9 @@ test "multi_dbi: 3 distinct DBIs in the same file" {
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
 
-        const dbi_users    = try txn.openDbi("users",            .{ .create = true });
-        const dbi_accounts = try txn.openDbi("accounts",         .{ .create = true });
-        const dbi_by_user  = try txn.openDbi("accounts_by_user", .{ .create = true, .dupsort = true });
+        const dbi_users = try txn.openDbi("users", .{ .create = true });
+        const dbi_accounts = try txn.openDbi("accounts", .{ .create = true });
+        const dbi_by_user = try txn.openDbi("accounts_by_user", .{ .create = true, .dupsort = true });
 
         // Insert a user
         const cpf = "12345678901   "; // 14 bytes
@@ -48,9 +49,9 @@ test "multi_dbi: 3 distinct DBIs in the same file" {
     var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
     defer txn.abort();
 
-    const dbi_users    = try txn.openDbi("users",            .{});
-    const dbi_accounts = try txn.openDbi("accounts",         .{});
-    const dbi_by_user  = try txn.openDbi("accounts_by_user", .{ .dupsort = true });
+    const dbi_users = try txn.openDbi("users", .{});
+    const dbi_accounts = try txn.openDbi("accounts", .{});
+    const dbi_by_user = try txn.openDbi("accounts_by_user", .{ .dupsort = true });
 
     // Verify user
     const user = try txn.get(dbi_users, "12345678901   ");
@@ -75,10 +76,11 @@ test "multi_dbi: 3 distinct DBIs in the same file" {
 }
 
 test "multi_dbi: DBIs are isolated" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -110,10 +112,11 @@ test "multi_dbi: DBIs are isolated" {
 }
 
 test "multi_dbi: atomic transaction across multiple DBIs" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024, io);
     defer env.close();
 
     // Setup
@@ -128,7 +131,7 @@ test "multi_dbi: atomic transaction across multiple DBIs" {
     // Simulate abort: nothing should have been inserted
     {
         var txn = try m.Transaction.begin(&env, null, .{});
-        const dbi_p = try txn.openDbi("primary",   .{});
+        const dbi_p = try txn.openDbi("primary", .{});
         const dbi_s = try txn.openDbi("secondary", .{ .dupsort = true });
         try txn.put(dbi_p, "k", "v", .{});
         try txn.put(dbi_s, "k", "v", .{});

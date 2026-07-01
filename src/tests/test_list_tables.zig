@@ -7,17 +7,18 @@
 //! txn.listTables() — enumerate named DBIs.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_list_tables.monolith";
 
 test "listTables: empty environment returns zero tables" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});
@@ -33,20 +34,21 @@ test "listTables: empty environment returns zero tables" {
 }
 
 test "listTables: returns all created tables" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 8, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 8, 1 << 20, io);
     defer env.close();
 
     {
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
-        _ = try txn.openDbi("alpha",   .{ .create = true });
-        _ = try txn.openDbi("beta",    .{ .create = true });
-        _ = try txn.openDbi("gamma",   .{ .create = true });
+        _ = try txn.openDbi("alpha", .{ .create = true });
+        _ = try txn.openDbi("beta", .{ .create = true });
+        _ = try txn.openDbi("gamma", .{ .create = true });
         try txn.commit();
     }
 
@@ -63,23 +65,24 @@ test "listTables: returns all created tables" {
     try std.testing.expectEqual(@as(usize, 3), names.len);
     // Order is lexicographic (B-tree order).
     try std.testing.expectEqualStrings("alpha", names[0]);
-    try std.testing.expectEqualStrings("beta",  names[1]);
+    try std.testing.expectEqualStrings("beta", names[1]);
     try std.testing.expectEqualStrings("gamma", names[2]);
 }
 
 test "listTables: drops are not listed" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 8, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 8, 1 << 20, io);
     defer env.close();
 
     {
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
-        _ = try txn.openDbi("keep",   .{ .create = true });
+        _ = try txn.openDbi("keep", .{ .create = true });
         _ = try txn.openDbi("remove", .{ .create = true });
         try txn.commit();
     }

@@ -7,17 +7,18 @@
 //! TxnFlags.try_begin and TxnFlags.nosync.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_txn_flags.monolith";
 
 test "try_begin: succeeds when no writer holds the lock" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{ .try_begin = true });
@@ -29,12 +30,13 @@ test "try_begin: succeeds when no writer holds the lock" {
 }
 
 test "try_begin: returns Busy when write lock already held" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     // Hold the write lock with txn1.
@@ -46,12 +48,13 @@ test "try_begin: returns Busy when write lock already held" {
 }
 
 test "nosync: commit succeeds without fsync" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 4, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{ .nosync = true });
@@ -69,12 +72,13 @@ test "nosync: commit succeeds without fsync" {
 }
 
 test "nosync: can coexist with env safe_nosync" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{ .safe_nosync = true }, 4, 1 << 20);
+    var env = try m.Environment.open(PATH, .{ .safe_nosync = true }, 4, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{ .nosync = true });

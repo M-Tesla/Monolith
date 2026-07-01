@@ -17,11 +17,12 @@ const Transaction = monolith.Transaction;
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "cursor renew: reuse cursor across successive read transactions" {
+    const io = std.testing.io;
     const path = "test_cursor_renew.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     // Seed some data.
@@ -64,11 +65,12 @@ test "cursor renew: reuse cursor across successive read transactions" {
 }
 
 test "cursor renew: fails when DBI is not open in new transaction" {
+    const io = std.testing.io;
     const path = "test_cursor_renew_fail.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -98,11 +100,12 @@ test "cursor renew: fails when DBI is not open in new transaction" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "reversedup: values iterated in descending order" {
+    const io = std.testing.io;
     const path = "test_reversedup.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try Transaction.begin(&env, null, .{});
@@ -142,12 +145,13 @@ test "reversedup: values iterated in descending order" {
 }
 
 test "reversedup: persists and reopens correctly" {
+    const io = std.testing.io;
     const path = "test_reversedup_persist.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
     {
-        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try Transaction.begin(&env, null, .{});
         defer txn.abort();
@@ -162,7 +166,7 @@ test "reversedup: persists and reopens correctly" {
     }
 
     {
-        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
         defer env.close();
         var txn = try Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();
@@ -179,11 +183,12 @@ test "reversedup: persists and reopens correctly" {
 }
 
 test "reversedup: countDups still accurate" {
+    const io = std.testing.io;
     const path = "test_reversedup_count.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try Transaction.begin(&env, null, .{});
@@ -215,12 +220,13 @@ fn doubleSize(_: *Environment, needed: usize) anyerror!usize {
 }
 
 test "map_full_fn: callback invoked when mmap grows" {
+    const io = std.testing.io;
     const path = "test_mapfull_cb.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
     // Start with a tiny initial map (4 pages) so growth is forced quickly.
-    var env = try Environment.open(path, .{}, 4, 4 * 4096);
+    var env = try Environment.open(path, .{}, 4, 4 * 4096, io);
     defer env.close();
 
     env.setMapFullHandler(doubleSize);
@@ -255,13 +261,14 @@ fn refuseGrowth(_: *Environment, _: usize) anyerror!usize {
 }
 
 test "map_full_fn: callback can abort commit by returning error" {
+    const io = std.testing.io;
     const path = "test_mapfull_abort.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
     // Start with exactly 4 pages (0=meta0, 1=meta1, 2=main_root, 3=gc_root).
     // Opening any new DBI allocates page 4, which overflows the 4-page mmap.
-    var env = try Environment.open(path, .{}, 4, 4 * 4096);
+    var env = try Environment.open(path, .{}, 4, 4 * 4096, io);
     defer env.close();
     env.setMapFullHandler(refuseGrowth);
 

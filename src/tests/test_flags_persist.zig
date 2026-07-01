@@ -9,17 +9,18 @@
 //! serialised into Tree.flags on commit and validated on the next openDbi.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_flags_persist.monolith";
 
 // ─── Flags round-trip ─────────────────────────────────────────────────────────
 
 test "flags_persist: dupsort flag survives commit + reopen" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
 
     // Create a dupsort DBI and commit.
     {
@@ -33,7 +34,7 @@ test "flags_persist: dupsort flag survives commit + reopen" {
     env.close();
 
     // Reopen — must succeed with matching flags.
-    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env2.close();
     {
         var txn = try m.Transaction.begin(&env2, null, .{ .rdonly = true });
@@ -50,10 +51,11 @@ test "flags_persist: dupsort flag survives commit + reopen" {
 }
 
 test "flags_persist: incompatible flags rejected" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
 
     {
         var txn = try m.Transaction.begin(&env, null, .{});
@@ -63,7 +65,7 @@ test "flags_persist: incompatible flags rejected" {
     }
     env.close();
 
-    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env2.close();
 
     // Opening without dupsort must return error.Incompatible.
@@ -76,10 +78,11 @@ test "flags_persist: incompatible flags rejected" {
 }
 
 test "flags_persist: reversekey flag survives reopen" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
 
     {
         var txn = try m.Transaction.begin(&env, null, .{});
@@ -92,7 +95,7 @@ test "flags_persist: reversekey flag survives reopen" {
     }
     env.close();
 
-    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env2.close();
     {
         var txn = try m.Transaction.begin(&env2, null, .{ .rdonly = true });
@@ -108,10 +111,11 @@ test "flags_persist: reversekey flag survives reopen" {
 }
 
 test "flags_persist: no flags — plain DBI reopens fine" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     {
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -121,7 +125,7 @@ test "flags_persist: no flags — plain DBI reopens fine" {
     }
     env.close();
 
-    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env2.close();
     {
         var txn = try m.Transaction.begin(&env2, null, .{ .rdonly = true });

@@ -584,13 +584,13 @@ pub const Transaction = struct {
         self.reader_slot = reader_slot;
         self.committed = false;
         // Reinitialize all collections that cleanup() deinit'd.
-        self.dirty_list = .{};
-        self.spill_list = .{};
-        self.shadow_list = .{};
-        self.dirty_pages_wm = .{};
-        self.freed_pages = .{};
-        self.committed_freed = .{};
-        self.reclaimed_pages = .{};
+        self.dirty_list = .empty;
+        self.spill_list = .empty;
+        self.shadow_list = .empty;
+        self.dirty_pages_wm = .empty;
+        self.freed_pages = .empty;
+        self.committed_freed = .empty;
+        self.reclaimed_pages = .empty;
         self.overflow_buf = &.{};
         self.loading_gc = false;
     }
@@ -1301,7 +1301,7 @@ pub const Transaction = struct {
     /// Returns the names of all named databases currently in the environment.
     /// The returned slice and each name string are heap-allocated; caller must free both.
     pub fn listTables(self: *Transaction, alloc: std.mem.Allocator) ![][]u8 {
-        var pairs = std.ArrayListUnmanaged([2][]u8){};
+        var pairs = std.ArrayListUnmanaged([2][]u8).empty;
         defer {
             for (pairs.items) |p| {
                 if (p[0].len > 0) alloc.free(p[0]);
@@ -1640,7 +1640,7 @@ pub const Transaction = struct {
                     const payload = zero_val[0..val_size];
                     const sz = nodeSz(key.len, val_size);
                     if (cow.getFreeSpace() >= sz + 2) {
-                        const node = try cow.putNode(ins_idx, key, payload, 0);
+                        const node = cow.putNode(ins_idx, key, payload, 0);
                         tree.items += 1;
                         tree.mod_txnid = self.txnid;
                         // Return mutable slice into the dirty buffer
@@ -2085,9 +2085,9 @@ pub const Transaction = struct {
 
         // 1. Enumerate all named DBIs from the main catalog using parallel
         //    ArrayListUnmanaged lists (consistent with engine coding style).
-        var cat_names = std.ArrayListUnmanaged([]u8){};
-        var cat_trees = std.ArrayListUnmanaged(core_types.Tree){};
-        var cat_flags = std.ArrayListUnmanaged(types.DbFlags){};
+        var cat_names = std.ArrayListUnmanaged([]u8).empty;
+        var cat_trees = std.ArrayListUnmanaged(core_types.Tree).empty;
+        var cat_flags = std.ArrayListUnmanaged(types.DbFlags).empty;
         defer {
             for (cat_names.items) |n| alloc.free(n);
             cat_names.deinit(alloc);
@@ -2096,7 +2096,7 @@ pub const Transaction = struct {
         }
 
         if (self.meta.trees.main.items > 0) {
-            var cat_pairs = std.ArrayListUnmanaged([2][]u8){};
+            var cat_pairs = std.ArrayListUnmanaged([2][]u8).empty;
             defer {
                 for (cat_pairs.items) |p| {
                     alloc.free(p[0]);
@@ -2120,7 +2120,7 @@ pub const Transaction = struct {
         }
 
         // 2. Open fresh destination environment.
-        var dest_env = try env_mod.Environment.open(dest_path, .{}, self.env.max_dbs, map_size);
+        var dest_env = try env_mod.Environment.open(dest_path, .{}, self.env.max_dbs, map_size, self.env.*.io);
         defer dest_env.close();
 
         var dest_txn = try Transaction.begin(&dest_env, null, .{});
@@ -2133,7 +2133,7 @@ pub const Transaction = struct {
             const entry_tree = cat_trees.items[ci];
             const entry_flags = cat_flags.items[ci];
 
-            var data_pairs = std.ArrayListUnmanaged([2][]u8){};
+            var data_pairs = std.ArrayListUnmanaged([2][]u8).empty;
             defer {
                 for (data_pairs.items) |p| {
                     alloc.free(p[0]);

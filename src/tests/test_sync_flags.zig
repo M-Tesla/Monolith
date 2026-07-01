@@ -8,18 +8,19 @@
 //! env.sync() explicitly flushes regardless of the flag.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_sync_flags.monolith";
 
 test "sync_flags: safe_nosync — data readable without explicit sync" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     {
-        var env = try m.Environment.open(PATH, .{ .safe_nosync = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .safe_nosync = true }, 16, 1 << 20, io);
         defer env.close();
 
         var txn = try m.Transaction.begin(&env, null, .{});
@@ -31,7 +32,7 @@ test "sync_flags: safe_nosync — data readable without explicit sync" {
 
     // Reopen — data must be present (OS page cache is coherent).
     {
-        var env = try m.Environment.open(PATH, .{ .safe_nosync = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .safe_nosync = true }, 16, 1 << 20, io);
         defer env.close();
 
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
@@ -44,13 +45,14 @@ test "sync_flags: safe_nosync — data readable without explicit sync" {
 }
 
 test "sync_flags: nosync — data readable without explicit sync" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     {
-        var env = try m.Environment.open(PATH, .{ .nosync = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .nosync = true }, 16, 1 << 20, io);
         defer env.close();
 
         var txn = try m.Transaction.begin(&env, null, .{});
@@ -61,7 +63,7 @@ test "sync_flags: nosync — data readable without explicit sync" {
     }
 
     {
-        var env = try m.Environment.open(PATH, .{ .nosync = true }, 16, 1 << 20);
+        var env = try m.Environment.open(PATH, .{ .nosync = true }, 16, 1 << 20, io);
         defer env.close();
 
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
@@ -74,12 +76,13 @@ test "sync_flags: nosync — data readable without explicit sync" {
 }
 
 test "sync_flags: env.sync() flushes explicitly" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{ .safe_nosync = true }, 16, 1 << 20);
+    var env = try m.Environment.open(PATH, .{ .safe_nosync = true }, 16, 1 << 20, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});

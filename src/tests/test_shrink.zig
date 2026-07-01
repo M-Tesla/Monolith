@@ -15,15 +15,17 @@ const m = @import("../lib.zig");
 const PATH: [:0]const u8 = "test_shrink.monolith";
 
 fn cleanup() void {
-    std.fs.cwd().deleteFile(PATH) catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 }
 
 test "shrink: file shrinks when threshold enabled after over-allocation" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024, io);
     defer env.close();
 
     // Phase 1: set growth_step but NO shrink threshold.
@@ -45,7 +47,7 @@ test "shrink: file shrinks when threshold enabled after over-allocation" {
     }
 
     // Capture the over-allocated size (no shrink happened since threshold=0).
-    const size_at_peak = try env.file.getEndPos();
+    const size_at_peak = try env.file.length(env.io);
     // Verify the resize actually snapped to 512KB.
     try std.testing.expect(size_at_peak >= 512 * 1024);
 
@@ -71,16 +73,17 @@ test "shrink: file shrinks when threshold enabled after over-allocation" {
     }
 
     // File should be significantly smaller than the 512KB peak.
-    const size_after_shrink = try env.file.getEndPos();
+    const size_after_shrink = try env.file.length(env.io);
     try std.testing.expect(size_after_shrink < size_at_peak);
 }
 
 test "shrink: file does not shrink when threshold is zero (disabled)" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
     // growth_step only, NO shrink_threshold.
-    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024, io);
     defer env.close();
     env.setGeometry(.{ .growth_step = 512 * 1024 });
 
@@ -97,7 +100,7 @@ test "shrink: file does not shrink when threshold is zero (disabled)" {
         try txn.commit();
     }
 
-    const size_after_insert = try env.file.getEndPos();
+    const size_after_insert = try env.file.length(env.io);
     try std.testing.expect(size_after_insert >= 512 * 1024); // grew to 512KB
 
     {
@@ -117,15 +120,16 @@ test "shrink: file does not shrink when threshold is zero (disabled)" {
     }
 
     // Without shrink_threshold, file must NOT shrink from the 512KB multiple.
-    const size_after_delete = try env.file.getEndPos();
+    const size_after_delete = try env.file.length(env.io);
     try std.testing.expectEqual(size_after_insert, size_after_delete);
 }
 
 test "shrink: data is intact after shrink" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 16, 32 * 1024 * 1024, io);
     defer env.close();
 
     // Insert 200 keys, shrink disabled during inserts.

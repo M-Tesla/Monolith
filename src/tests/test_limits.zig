@@ -9,7 +9,7 @@
 //! error.BadValSize from txn.put() where enforced.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_limits.monolith";
 
@@ -38,10 +38,11 @@ test "limits: max_pages fits in u32" {
 // ─── Key size enforcement ─────────────────────────────────────────────────────
 
 test "limits: key at max_key_size succeeds" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     const key = try std.testing.allocator.alloc(u8, m.limits.max_key_size);
@@ -56,10 +57,11 @@ test "limits: key at max_key_size succeeds" {
 }
 
 test "limits: key exceeding max_key_size returns error.BadValSize" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     const key = try std.testing.allocator.alloc(u8, m.limits.max_key_size + 1);
@@ -75,10 +77,11 @@ test "limits: key exceeding max_key_size returns error.BadValSize" {
 // ─── Value size — no hard limit (overflow pages handle large values) ──────────
 
 test "limits: inline value (at max_val_size) succeeds" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     const val = try std.testing.allocator.alloc(u8, m.limits.max_val_size);
@@ -93,10 +96,11 @@ test "limits: inline value (at max_val_size) succeeds" {
 }
 
 test "limits: large value (overflow) succeeds and reads back correctly" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     // 8 KB — well above max_val_size; stored via overflow pages.

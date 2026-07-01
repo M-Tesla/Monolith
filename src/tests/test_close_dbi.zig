@@ -12,12 +12,13 @@ const m   = @import("../lib.zig");
 const PATH = "test_close_dbi.monolith";
 
 test "close_dbi: data survives after closing and reopening the DBI" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20, io);
     defer env.close();
 
     // Create DBI and write data.
@@ -45,12 +46,13 @@ test "close_dbi: data survives after closing and reopening the DBI" {
 }
 
 test "close_dbi: slot is recycled on next openDbi" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 16, 1 << 20, io);
     defer env.close();
 
     // Open two DBIs: slot 1 and slot 2.
@@ -77,12 +79,13 @@ test "close_dbi: slot is recycled on next openDbi" {
 }
 
 test "close_dbi: multiple DBIs, each closes and reopens independently" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)           catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 32, 1 << 20);
+    var env = try m.Environment.open(PATH, .{}, 32, 1 << 20, io);
     defer env.close();
 
     // Create 5 DBIs.

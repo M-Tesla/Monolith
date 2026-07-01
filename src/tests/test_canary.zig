@@ -12,10 +12,11 @@ const m   = @import("../lib.zig");
 const PATH = "test_canary.monolith";
 
 test "canary: put and get within same transaction" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)         catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});
@@ -30,11 +31,12 @@ test "canary: put and get within same transaction" {
 }
 
 test "canary: survives commit and reopen" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)         catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     {
-        var env = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024, io);
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
         try txn.putCanary(0xDEAD, 0xBEEF, 0xCAFE, 0xBABE);
@@ -42,7 +44,7 @@ test "canary: survives commit and reopen" {
         env.close();
     }
 
-    var env2 = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024);
+    var env2 = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024, io);
     defer env2.close();
     var txn2 = try m.Transaction.begin(&env2, null, .{ .rdonly = true });
     defer txn2.abort();
@@ -54,10 +56,11 @@ test "canary: survives commit and reopen" {
 }
 
 test "canary: read-only transaction cannot putCanary" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)         catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
@@ -66,10 +69,11 @@ test "canary: read-only transaction cannot putCanary" {
 }
 
 test "user-ctx: round-trip" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH)         catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 4 * 1024 * 1024, io);
     defer env.close();
 
     var sentinel: u64 = 0xABCDEF01;

@@ -13,27 +13,30 @@
 //!   4. filho de filho (aninhamento duplo)
 //!   5. child commit preserva dados pré-existentes do pai
 
-const std   = @import("std");
-const lib   = @import("../lib.zig");
-const Env   = lib.Environment;
-const Txn   = lib.Transaction;
+const std = @import("std");
+const lib = @import("../lib.zig");
+const Env = lib.Environment;
+const Txn = lib.Transaction;
 const DbFlags = lib.DbFlags;
 const TxnFlags = lib.TxnFlags;
 
 const tmp_dir = "test_nested_tmp";
 
 fn openEnv() !Env {
-    std.fs.cwd().deleteTree(tmp_dir) catch {};
-    try std.fs.cwd().makePath(tmp_dir);
-    return Env.open(tmp_dir ++ "/data.db", .{}, 16, 64 * 1024 * 1024);
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
+    // mkdir -p tmp_dir (manually create directory since makePath doesn't exist)
+    std.Io.Dir.cwd().createDir(io, tmp_dir, .default_dir) catch {};
+    return Env.open(tmp_dir ++ "/data.db", .{}, 16, 64 * 1024 * 1024, io);
 }
 
 // ─── Teste 1: child commit — dados visíveis no pai ──────────────────────────
 
 test "nested: child commit propagates to parent" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var par = try Txn.begin(&env, null, .{});
     errdefer par.abort();
@@ -65,9 +68,10 @@ test "nested: child commit propagates to parent" {
 // ─── Teste 2: child abort — pai inalterado ──────────────────────────────────
 
 test "nested: child abort discards changes" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var par = try Txn.begin(&env, null, .{});
     errdefer par.abort();
@@ -96,9 +100,10 @@ test "nested: child abort discards changes" {
 // ─── Teste 3: múltiplos filhos sequenciais ──────────────────────────────────
 
 test "nested: sequential children see cumulative state" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var par = try Txn.begin(&env, null, .{});
     errdefer par.abort();
@@ -135,9 +140,10 @@ test "nested: sequential children see cumulative state" {
 // ─── Teste 4: filho de filho (aninhamento duplo) ─────────────────────────────
 
 test "nested: double nesting" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var root = try Txn.begin(&env, null, .{});
     errdefer root.abort();
@@ -167,9 +173,10 @@ test "nested: double nesting" {
 // ─── Teste 5: child commit preserva dados pré-existentes do pai ─────────────
 
 test "nested: child commit preserves parent data" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     // Inserir dados na DB antes
     {
@@ -202,9 +209,10 @@ test "nested: child commit preserves parent data" {
 // ─── Teste 6: child commit com delete ────────────────────────────────────────
 
 test "nested: child delete propagates" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     {
         var t = try Txn.begin(&env, null, .{});

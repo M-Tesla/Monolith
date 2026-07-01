@@ -22,17 +22,20 @@ const Txn = lib.Transaction;
 const tmp_dir = "test_adv_put_tmp";
 
 fn openEnv() !Env {
-    std.fs.cwd().deleteTree(tmp_dir) catch {};
-    try std.fs.cwd().makePath(tmp_dir);
-    return Env.open(tmp_dir ++ "/data.db", .{}, 16, 64 * 1024 * 1024);
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
+    // mkdir -p tmp_dir (manually create directory since makePath doesn't exist)
+    std.Io.Dir.cwd().createDir(io, tmp_dir, .default_dir) catch {};
+    return Env.open(tmp_dir ++ "/data.db", .{}, 16, 64 * 1024 * 1024, io);
 }
 
 // ─── Test 1: basic append ────────────────────────────────────────────────────
 
 test "append: ordered bulk insert reads back correctly" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var txn = try Txn.begin(&env, null, .{});
     errdefer txn.abort();
@@ -65,9 +68,10 @@ test "append: ordered bulk insert reads back correctly" {
 // ─── Test 2: append with varied values ───────────────────────────────────────
 
 test "append: preserves values after commit" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var txn = try Txn.begin(&env, null, .{});
     errdefer txn.abort();
@@ -101,9 +105,10 @@ test "append: preserves values after commit" {
 // ─── Test 3: append forcing page splits ──────────────────────────────────────
 
 test "append: forces page splits with 1000 keys" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var txn = try Txn.begin(&env, null, .{});
     errdefer txn.abort();
@@ -137,9 +142,10 @@ test "append: forces page splits with 1000 keys" {
 // ─── Test 4: reserve zero-copy write ─────────────────────────────────────────
 
 test "reserve: zero-copy write reads back correctly" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var txn = try Txn.begin(&env, null, .{});
     errdefer txn.abort();
@@ -162,9 +168,10 @@ test "reserve: zero-copy write reads back correctly" {
 // ─── Test 5: reserve persists after commit ───────────────────────────────────
 
 test "reserve: persists after commit and reopen" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     // Write via reserve
     {
@@ -189,9 +196,10 @@ test "reserve: persists after commit and reopen" {
 // ─── Test 6: reserve multiple keys ───────────────────────────────────────────
 
 test "reserve: multiple keys different sizes" {
+    const io = std.testing.io;
     var env = try openEnv();
     defer env.close();
-    defer std.fs.cwd().deleteTree(tmp_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, tmp_dir) catch {};
 
     var txn = try Txn.begin(&env, null, .{});
     errdefer txn.abort();

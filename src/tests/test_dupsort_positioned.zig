@@ -7,15 +7,16 @@
 //! getBoth / getBothRange / NODUPDATA.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_dupsort_positioned.monolith";
 
 test "getBoth: exact (key,val) hit returns true" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -39,10 +40,11 @@ test "getBoth: exact (key,val) hit returns true" {
 }
 
 test "getBothRange: lower-bound on val" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -81,10 +83,11 @@ test "getBothRange: lower-bound on val" {
 }
 
 test "nodupdata: rejects duplicate (key,val)" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 8 * 1024 * 1024, io);
     defer env.close();
 
     var txn = try m.Transaction.begin(&env, null, .{});
@@ -92,8 +95,7 @@ test "nodupdata: rejects duplicate (key,val)" {
     const dbi = try txn.openDbi("d", .{ .create = true, .dupsort = true });
     try txn.put(dbi, "k", "v", .{});
     // Second insert of same pair with NODUPDATA must fail.
-    try std.testing.expectError(error.KeyExist,
-        txn.put(dbi, "k", "v", .{ .nodupdata = true }));
+    try std.testing.expectError(error.KeyExist, txn.put(dbi, "k", "v", .{ .nodupdata = true }));
     // Different value is fine.
     try txn.put(dbi, "k", "w", .{ .nodupdata = true });
     try txn.commit();

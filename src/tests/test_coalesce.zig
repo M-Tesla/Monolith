@@ -6,20 +6,22 @@
 // SPDX-License-Identifier: MIT
 /// Tests for coalesce flag — GC entry merging (Fase 34).
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH: [:0]const u8 = "test_coalesce.monolith";
 
 fn cleanup() void {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 }
 
 test "coalesce: GC tree stays compact over many write cycles" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{ .coalesce = true }, 16, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{ .coalesce = true }, 16, 8 * 1024 * 1024, io);
     defer env.close();
 
     // Run 20 write-delete cycles.  Without coalescing this would produce 20
@@ -88,14 +90,14 @@ test "coalesce: data consistent regardless of coalesce flag" {
     for (PATHS, FLAGS) |path, coal| {
         var lck_buf: [64]u8 = undefined;
         const lck_path = std.fmt.bufPrint(&lck_buf, "{s}-lck", .{path}) catch unreachable;
-        std.fs.cwd().deleteFile(path)     catch {};
-        std.fs.cwd().deleteFile(lck_path) catch {};
+        std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
+        std.Io.Dir.cwd().deleteFile(std.testing.io, lck_path) catch {};
         defer {
-            std.fs.cwd().deleteFile(path)     catch {};
-            std.fs.cwd().deleteFile(lck_path) catch {};
+            std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
+            std.Io.Dir.cwd().deleteFile(std.testing.io, lck_path) catch {};
         }
 
-        var env = try m.Environment.open(path, .{ .coalesce = coal }, 16, 8 * 1024 * 1024);
+        var env = try m.Environment.open(path, .{ .coalesce = coal }, 16, 8 * 1024 * 1024, std.testing.io);
         defer env.close();
 
         // Three write-delete-write cycles.
@@ -135,7 +137,7 @@ test "coalesce: no_coalesce flag disables merging" {
     defer cleanup();
 
     // coalesce=false: GC entries are NOT merged — basic ops still work.
-    var env = try m.Environment.open(PATH, .{ .coalesce = false }, 16, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{ .coalesce = false }, 16, 8 * 1024 * 1024, std.testing.io);
     defer env.close();
 
     {

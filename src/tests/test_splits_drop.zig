@@ -9,17 +9,18 @@
 //! - dropDbi: empty or permanently remove a named DBI.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_splits_drop.monolith";
 
 // ─── Splits ──────────────────────────────────────────────────────────────────
 
 test "splits: 500 keys force splits and order is preserved" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024, io);
     defer env.close();
 
     const N: u32 = 500;
@@ -49,7 +50,7 @@ test "splits: 500 keys force splits and order is preserved" {
 
     var count: u32 = 0;
     var prev_key_buf: [16]u8 = undefined;
-    var prev_key_len: usize  = 0;
+    var prev_key_len: usize = 0;
 
     var kv_opt = try cur.first();
     while (kv_opt) |kv| : (kv_opt = try cur.next()) {
@@ -66,10 +67,11 @@ test "splits: 500 keys force splits and order is preserved" {
 }
 
 test "splits: 500 keys inserted in reverse order" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024, io);
     defer env.close();
 
     const N: u32 = 500;
@@ -100,10 +102,11 @@ test "splits: 500 keys inserted in reverse order" {
 }
 
 test "splits: get after commit with splits" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024, io);
     defer env.close();
 
     const N: u32 = 300;
@@ -143,10 +146,11 @@ test "splits: get after commit with splits" {
 // ─── dropDbi ─────────────────────────────────────────────────────────────────
 
 test "dropDbi: empty without delete keeps DBI in catalog" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -182,10 +186,11 @@ test "dropDbi: empty without delete keeps DBI in catalog" {
 }
 
 test "dropDbi: permanent delete removes from catalog" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -214,10 +219,11 @@ test "dropDbi: permanent delete removes from catalog" {
 // ─── Rebalance / Coalescing ───────────────────────────────────────────────────
 
 test "rebalance: delete all keys via cursor collapses the tree" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024, io);
     defer env.close();
 
     const N: u32 = 400;
@@ -254,8 +260,8 @@ test "rebalance: delete all keys via cursor collapses the tree" {
     // Verify the tree is empty
     var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
     defer txn.abort();
-    const dbi  = try txn.openDbi("tree", .{});
-    var cur    = try txn.cursor(dbi);
+    const dbi = try txn.openDbi("tree", .{});
+    var cur = try txn.cursor(dbi);
     defer cur.close();
     const first = try cur.first();
     try std.testing.expect(first == null);
@@ -264,10 +270,11 @@ test "rebalance: delete all keys via cursor collapses the tree" {
 }
 
 test "rebalance: delete half the keys maintains consistency" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024, io);
     defer env.close();
 
     const N: u32 = 300;
@@ -312,19 +319,20 @@ test "rebalance: delete half the keys maintains consistency" {
     try std.testing.expectEqual(N / 2, count); // 150 odd keys
 
     // Spot-check (separate buffers to avoid aliasing)
-    var buf_odd:  [16]u8 = undefined;
+    var buf_odd: [16]u8 = undefined;
     var buf_even: [16]u8 = undefined;
-    const k_odd  = std.fmt.bufPrint(&buf_odd,  "k{d:0>12}", .{1}) catch unreachable;
+    const k_odd = std.fmt.bufPrint(&buf_odd, "k{d:0>12}", .{1}) catch unreachable;
     const k_even = std.fmt.bufPrint(&buf_even, "k{d:0>12}", .{2}) catch unreachable;
     try std.testing.expect((try txn.get(dbi, k_odd)) != null);
     try std.testing.expect((try txn.get(dbi, k_even)) == null);
 }
 
 test "rebalance: root collapse after full deletion" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -358,24 +366,25 @@ test "rebalance: root collapse after full deletion" {
     // Tree must be empty
     var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
     defer txn.abort();
-    const dbi  = try txn.openDbi("t", .{});
-    var cur    = try txn.cursor(dbi);
+    const dbi = try txn.openDbi("t", .{});
+    var cur = try txn.cursor(dbi);
     defer cur.close();
     try std.testing.expect((try cur.first()) == null);
 }
 
 test "dropDbi: other DBIs are not affected" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 8, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
         const a = try txn.openDbi("alpha", .{ .create = true });
-        const b = try txn.openDbi("beta",  .{ .create = true });
+        const b = try txn.openDbi("beta", .{ .create = true });
         try txn.put(a, "key1", "val1", .{});
         try txn.put(b, "key2", "val2", .{});
         try txn.commit();
@@ -392,7 +401,7 @@ test "dropDbi: other DBIs are not affected" {
     // "beta" remains intact
     var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
     defer txn.abort();
-    const b   = try txn.openDbi("beta", .{});
+    const b = try txn.openDbi("beta", .{});
     const val = try txn.get(b, "key2");
     try std.testing.expect(val != null);
     try std.testing.expectEqualStrings("val2", val.?);
@@ -401,10 +410,11 @@ test "dropDbi: other DBIs are not affected" {
 // ─── cursor.del() keeps position ─────────────────────────────────────────────
 
 test "cursor_del: del() positions on successor (no rebalance)" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -447,10 +457,11 @@ test "cursor_del: del() positions on successor (no rebalance)" {
 }
 
 test "cursor_del: del() loop over all entries" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 64 * 1024 * 1024, io);
     defer env.close();
 
     const N: u32 = 200;

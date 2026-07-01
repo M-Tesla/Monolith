@@ -13,10 +13,11 @@ const m = @import("../lib.zig");
 const PATH = "test_dupsort.monolith";
 
 test "dupsort: put multiple values per key" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     // Insert: user_doc → [account1, account2, account3]
@@ -24,8 +25,8 @@ test "dupsort: put multiple values per key" {
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
         const dbi = try txn.openDbi("accounts_by_user", .{
-            .create   = true,
-            .dupsort  = true,
+            .create = true,
+            .dupsort = true,
         });
 
         const user_doc = "12345678901   "; // 14 bytes (CPF zero-padded)
@@ -61,10 +62,11 @@ test "dupsort: put multiple values per key" {
 }
 
 test "dupsort: delete a specific value" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {
@@ -105,10 +107,11 @@ test "dupsort: delete a specific value" {
 }
 
 test "dupsort: multiple independent keys" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {

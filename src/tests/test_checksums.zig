@@ -9,15 +9,16 @@
 //! pages are detected by env.check().
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_checksums.monolith";
 
 test "checksums: clean database reports no errors" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
 
     // Write enough data to force at least one data page beyond the root.
     {
@@ -41,12 +42,13 @@ test "checksums: clean database reports no errors" {
 }
 
 test "checksums: corrupted byte detected by env.check()" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     // 1. Write data and close cleanly.
     {
-        var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+        var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
         const dbi = try txn.openDbi("t", .{ .create = true });
@@ -63,17 +65,19 @@ test "checksums: corrupted byte detected by env.check()" {
     // 2. Corrupt a byte in page 2 (first data page, body at offset 20).
     //    Offset = 2 * 4096 + 32  (well inside the page body).
     {
-        const file = try std.fs.cwd().openFile(PATH, .{ .mode = .read_write });
-        defer file.close();
+        const file = try std.Io.Dir.cwd().openFile(io, PATH, .{ .mode = .read_write });
+        defer file.close(io);
         const corrupt_offset: u64 = 2 * 4096 + 32;
         var byte: [1]u8 = undefined;
-        _ = try file.pread(&byte, corrupt_offset);
+        const bufs = [_][]u8{byte[0..]};
+        _ = try file.readPositional(io, &bufs, corrupt_offset);
         byte[0] ^= 0xFF; // flip all bits
-        _ = try file.pwrite(&byte, corrupt_offset);
+
+        try file.writePositionalAll(io, &byte, corrupt_offset);
     }
 
     // 3. Reopen and check — must report at least one error.
-    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env2 = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env2.close();
     const result = env2.check();
     try std.testing.expect(result.errors > 0);

@@ -7,27 +7,28 @@
 //! Geometry API — growth_step and size_upper control mmap growth.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
-const PATH     = "test_geometry.monolith";
-const PAGE     = 4096;
+const PATH = "test_geometry.monolith";
+const PAGE = 4096;
 
 test "geometry: growth_step — each resize is a multiple of step" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     const STEP = 256 * 1024; // 256 KB
 
-    var env = try m.Environment.open(PATH, .{}, 16, 4 * PAGE);
+    var env = try m.Environment.open(PATH, .{}, 16, 4 * PAGE, io);
     defer env.close();
     env.setGeometry(.{ .growth_step = STEP });
 
     // Track resize calls via map_full_fn.
     const S = struct {
         var resize_count: usize = 0;
-        var last_size:    usize = 0;
+        var last_size: usize = 0;
         fn onFull(e: *m.Environment, needed: usize) anyerror!usize {
             _ = e;
             resize_count += 1;
@@ -56,20 +57,21 @@ test "geometry: growth_step — each resize is a multiple of step" {
 
     // Verify each observed resize produced a map size that is a multiple of STEP.
     // (We check via the final file size.)
-    const file = try std.fs.cwd().openFile(PATH, .{});
-    defer file.close();
-    const file_size = try file.getEndPos();
+    const file = try std.Io.Dir.cwd().openFile(io, PATH, .{});
+    defer file.close(io);
+    const file_size = try file.length(io);
     try std.testing.expect(file_size % STEP == 0);
 }
 
 test "geometry: size_upper — commit returns MapFull when limit exceeded" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     // Open with 8 pages; set size_upper to same — no mmap growth allowed.
-    var env = try m.Environment.open(PATH, .{}, 16, 8 * PAGE);
+    var env = try m.Environment.open(PATH, .{}, 16, 8 * PAGE, io);
     defer env.close();
     env.setGeometry(.{ .size_upper = 8 * PAGE });
 
@@ -102,13 +104,14 @@ test "geometry: size_upper — commit returns MapFull when limit exceeded" {
 }
 
 test "geometry: growth_step zero — grows by minimum needed" {
-    std.fs.cwd().deleteFile(PATH)           catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(PATH)           catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     // No setGeometry call — growth_step stays 0 (minimum needed).
-    var env = try m.Environment.open(PATH, .{}, 16, 4 * PAGE);
+    var env = try m.Environment.open(PATH, .{}, 16, 4 * PAGE, io);
     defer env.close();
 
     {

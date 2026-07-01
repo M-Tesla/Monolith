@@ -427,7 +427,7 @@ pub const Environment = struct {
     /// Useful when operating in safe_nosync or nosync mode to durably
     /// persist a batch of committed transactions at a chosen point.
     pub fn sync(self: *Environment) void {
-        self.map.sync() catch {}; // public API stays void; errors are best-effort
+        self.map.sync(); // public API stays void; errors are best-effort
     }
 
     // ─── Geometry ────────────────────────────────────────────────────────────
@@ -476,7 +476,6 @@ pub const Environment = struct {
     /// streams exactly `first_unallocated` pages to the destination file.
     /// Active readers are never blocked.
     pub fn copy(self: *Environment, dest_path: [:0]const u8) !void {
-        // Snapshot the page count under the writer lock for consistency.
         try self.lock.lockWriter();
         const num_pages = self.bestMeta().geometry.first_unallocated;
         try self.lock.unlockWriter();
@@ -485,7 +484,13 @@ pub const Environment = struct {
         defer dest.close(self.io);
 
         const copy_len = @as(usize, num_pages) * PAGE_SIZE;
-        try dest.writeAll(self.map.ptr[0..copy_len]);
+        const data = self.map.ptr[0..copy_len];
+
+        var write_buf: [65536]u8 = undefined;
+        var dest_writer = dest.writer(self.io, &write_buf);
+        const w = &dest_writer.interface;
+        try w.writeAll(data);
+        try w.flush();
     }
 
     // ─── Replication ─────────────────────────────────────────────────────────
@@ -531,7 +536,7 @@ pub const Environment = struct {
             @memcpy(self.map.ptr[meta_offset .. meta_offset + PAGE_SIZE], meta[0..PAGE_SIZE]);
         }
 
-        try self.map.sync();
+        self.map.sync();
         self.best_meta_idx = next_slot;
     }
 
@@ -643,10 +648,10 @@ pub const Environment = struct {
 // ─────────────────────────────────────────────────────────────────────────────
 test "Environment: open/close new database" {
     const path = "test_env_open.monolith";
-    defer std.Io.Dir.cwd().deleteFile(path) catch {};
-    defer std.Io.Dir.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, std.testing.io);
     defer env.close();
 
     const m = env.bestMeta();
@@ -659,15 +664,15 @@ test "Environment: open/close new database" {
 
 test "Environment: reopen preserves meta" {
     const path = "test_env_reopen.monolith";
-    defer std.Io.Dir.cwd().deleteFile(path) catch {};
-    defer std.Io.Dir.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path ++ "-lck") catch {};
 
     {
-        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, std.testing.io);
         env.close();
     }
     {
-        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024, std.testing.io);
         defer env.close();
         const m = env.bestMeta();
         try std.testing.expect(m.validate());

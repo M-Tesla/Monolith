@@ -11,15 +11,17 @@ const m = @import("../lib.zig");
 const PATH: [:0]const u8 = "test_liforeclaim.monolith";
 
 fn cleanup() void {
-    std.fs.cwd().deleteFile(PATH) catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 }
 
 test "liforeclaim: pages are reclaimed and data is consistent" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{ .liforeclaim = true }, 16, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{ .liforeclaim = true }, 16, 8 * 1024 * 1024, io);
     defer env.close();
 
     // Insert batch A.
@@ -84,10 +86,11 @@ test "liforeclaim: pages are reclaimed and data is consistent" {
 }
 
 test "liforeclaim: multiple GC rounds produce consistent state" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{ .liforeclaim = true }, 16, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{ .liforeclaim = true }, 16, 8 * 1024 * 1024, io);
     defer env.close();
 
     // Three write-delete-rewrite cycles.
@@ -143,17 +146,18 @@ test "liforeclaim: multiple GC rounds produce consistent state" {
 }
 
 test "liforeclaim: LIFO mode vs FIFO produces identical results" {
+    const io = std.testing.io;
     const PATH_LIFO: [:0]const u8 = "test_lifo_a.monolith";
     const PATH_FIFO: [:0]const u8 = "test_lifo_b.monolith";
-    std.fs.cwd().deleteFile(PATH_LIFO) catch {};
-    std.fs.cwd().deleteFile(PATH_LIFO ++ "-lck") catch {};
-    std.fs.cwd().deleteFile(PATH_FIFO) catch {};
-    std.fs.cwd().deleteFile(PATH_FIFO ++ "-lck") catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH_LIFO) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH_LIFO ++ "-lck") catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH_FIFO) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH_FIFO ++ "-lck") catch {};
     defer {
-        std.fs.cwd().deleteFile(PATH_LIFO) catch {};
-        std.fs.cwd().deleteFile(PATH_LIFO ++ "-lck") catch {};
-        std.fs.cwd().deleteFile(PATH_FIFO) catch {};
-        std.fs.cwd().deleteFile(PATH_FIFO ++ "-lck") catch {};
+        std.Io.Dir.cwd().deleteFile(io, PATH_LIFO) catch {};
+        std.Io.Dir.cwd().deleteFile(io, PATH_LIFO ++ "-lck") catch {};
+        std.Io.Dir.cwd().deleteFile(io, PATH_FIFO) catch {};
+        std.Io.Dir.cwd().deleteFile(io, PATH_FIFO ++ "-lck") catch {};
     }
 
     const configs = [_]struct { path: [:0]const u8, lifo: bool }{
@@ -161,7 +165,7 @@ test "liforeclaim: LIFO mode vs FIFO produces identical results" {
         .{ .path = PATH_FIFO, .lifo = false },
     };
     for (configs) |cfg| {
-        var env = try m.Environment.open(cfg.path, .{ .liforeclaim = cfg.lifo }, 16, 8 * 1024 * 1024);
+        var env = try m.Environment.open(cfg.path, .{ .liforeclaim = cfg.lifo }, 16, 8 * 1024 * 1024, io);
         defer env.close();
 
         {

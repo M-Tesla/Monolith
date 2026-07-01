@@ -21,10 +21,11 @@ fn u64ToKey(n: u64) [8]u8 {
 }
 
 test "integerkey: insert and read by sequence" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     // Append 5 ledger entries
@@ -32,7 +33,7 @@ test "integerkey: insert and read by sequence" {
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
         const dbi = try txn.openDbi("ledger_entries", .{
-            .create     = true,
+            .create = true,
             .integerkey = true,
         });
 
@@ -64,10 +65,11 @@ test "integerkey: insert and read by sequence" {
 }
 
 test "integerkey: last() returns highest sequence" {
-    defer std.fs.cwd().deleteFile(PATH) catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
-    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     {

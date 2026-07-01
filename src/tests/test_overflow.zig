@@ -30,11 +30,12 @@ fn makePayload(buf: []u8, seed: u8) void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "overflow: put and get value just above threshold (2049 bytes)" {
+    const io = std.testing.io;
     const path = "test_overflow_basic.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     // Allocate a large value (just above 2048 threshold).
@@ -67,13 +68,14 @@ test "overflow: put and get value just above threshold (2049 bytes)" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "overflow: put and get 1 MB value" {
+    const io = std.testing.io;
     const path = "test_overflow_1mb.monolith";
-    std.fs.cwd().deleteFile(path) catch {};
-    std.fs.cwd().deleteFile(path ++ "-lck") catch {};
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 32 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     const val_len: usize = 1024 * 1024; // 1 MB
@@ -108,9 +110,10 @@ test "overflow: put and get 1 MB value" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "overflow: survives commit and reopen" {
+    const io = std.testing.io;
     const path = "test_overflow_reopen.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
     const val_len: usize = 8192; // 8 KB — two overflow pages
     var payload: [8192]u8 = undefined;
@@ -118,7 +121,7 @@ test "overflow: survives commit and reopen" {
 
     // Write.
     {
-        var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024, io);
         defer env.close();
         var txn = try Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -129,7 +132,7 @@ test "overflow: survives commit and reopen" {
 
     // Reopen and read.
     {
-        var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024);
+        var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024, io);
         defer env.close();
         var txn = try Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();
@@ -146,11 +149,12 @@ test "overflow: survives commit and reopen" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "overflow: delete removes large value and frees pages" {
+    const io = std.testing.io;
     const path = "test_overflow_del.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     var payload: [4096 * 3]u8 = undefined;
@@ -208,11 +212,12 @@ test "overflow: delete removes large value and frees pages" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "overflow: cursor iteration yields large value" {
+    const io = std.testing.io;
     const path = "test_overflow_cursor.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     const val_len: usize = 5000; // ~5 KB
@@ -266,11 +271,12 @@ test "overflow: cursor iteration yields large value" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "overflow: overwrite large value with another large value" {
+    const io = std.testing.io;
     const path = "test_overflow_overwrite.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 16 * 1024 * 1024, io);
     defer env.close();
 
     var v1: [3000]u8 = undefined;
@@ -311,11 +317,12 @@ test "overflow: overwrite large value with another large value" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "overflow: mix of inline and overflow values in one DBI" {
+    const io = std.testing.io;
     const path = "test_overflow_mixed.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 32 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     const n_inline = 100;
@@ -382,11 +389,12 @@ test "overflow: mix of inline and overflow values in one DBI" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "overflow: env.check() validates overflow page runs" {
+    const io = std.testing.io;
     const path = "test_overflow_check.monolith";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    defer std.fs.cwd().deleteFile(path ++ "-lck") catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path ++ "-lck") catch {};
 
-    var env = try Environment.open(path, .{}, 4, 32 * 1024 * 1024);
+    var env = try Environment.open(path, .{}, 4, 32 * 1024 * 1024, io);
     defer env.close();
 
     {

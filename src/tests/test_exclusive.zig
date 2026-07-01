@@ -11,27 +11,31 @@ const m = @import("../lib.zig");
 const PATH: [:0]const u8 = "test_exclusive.monolith";
 
 fn cleanup() void {
-    std.fs.cwd().deleteFile(PATH) catch {};
-    std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 }
 
 test "exclusive: opens without creating a .lck file" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{ .exclusive = true }, 16, 4 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{ .exclusive = true }, 16, 4 * 1024 * 1024, io);
     defer env.close();
 
     // The .lck file must not exist.
-    const lck_stat = std.fs.cwd().statFile(PATH ++ "-lck") catch null;
+    const cwd = std.Io.Dir.cwd();
+    const lck_stat = cwd.statFile(io, PATH ++ "-lck", .{}) catch null;
     try std.testing.expect(lck_stat == null);
 }
 
 test "exclusive: read and write transactions work correctly" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{ .exclusive = true }, 16, 4 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{ .exclusive = true }, 16, 4 * 1024 * 1024, io);
     defer env.close();
 
     // Write some data.
@@ -40,7 +44,7 @@ test "exclusive: read and write transactions work correctly" {
         errdefer txn.abort();
         const dbi = try txn.openDbi("ex", .{ .create = true });
         try txn.put(dbi, "hello", "world", .{});
-        try txn.put(dbi, "foo",   "bar",   .{});
+        try txn.put(dbi, "foo", "bar", .{});
         try txn.commit();
     }
 
@@ -59,10 +63,11 @@ test "exclusive: read and write transactions work correctly" {
 }
 
 test "exclusive: multiple transactions work without lock contention" {
+    const io = std.testing.io;
     cleanup();
     defer cleanup();
 
-    var env = try m.Environment.open(PATH, .{ .exclusive = true }, 16, 8 * 1024 * 1024);
+    var env = try m.Environment.open(PATH, .{ .exclusive = true }, 16, 8 * 1024 * 1024, io);
     defer env.close();
 
     // 5 sequential write transactions, each doing 20 inserts.

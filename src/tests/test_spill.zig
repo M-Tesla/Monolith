@@ -8,19 +8,20 @@
 //! list, then commit writes everything correctly to the database.
 
 const std = @import("std");
-const m   = @import("../lib.zig");
+const m = @import("../lib.zig");
 
 const PATH = "test_spill.monolith";
 
 test "spill: 100k keys in one transaction, commit, reopen, verify" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     const N = 100_000;
 
     // ── Write phase ───────────────────────────────────────────────────────
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24); // 16 MB
+        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24, io); // 16 MB
         defer env.close();
 
         var txn = try m.Transaction.begin(&env, null, .{});
@@ -42,7 +43,7 @@ test "spill: 100k keys in one transaction, commit, reopen, verify" {
 
     // ── Verify phase ──────────────────────────────────────────────────────
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24);
+        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24, io);
         defer env.close();
 
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
@@ -64,12 +65,13 @@ test "spill: 100k keys in one transaction, commit, reopen, verify" {
 }
 
 test "spill: abort rolls back large transaction completely" {
-    defer std.fs.cwd().deleteFile(PATH)         catch {};
-    defer std.fs.cwd().deleteFile(PATH ++ "-lck") catch {};
+    const io = std.testing.io;
+    defer std.Io.Dir.cwd().deleteFile(io, PATH) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, PATH ++ "-lck") catch {};
 
     // Create a small initial DB.
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24);
+        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         errdefer txn.abort();
@@ -80,7 +82,7 @@ test "spill: abort rolls back large transaction completely" {
 
     // Begin a large transaction but ABORT it.
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24);
+        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{});
         const dbi = try txn.openDbi("main", .{});
@@ -95,7 +97,7 @@ test "spill: abort rolls back large transaction completely" {
 
     // Verify: only the sentinel key should exist.
     {
-        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24);
+        var env = try m.Environment.open(PATH, .{}, 16, 1 << 24, io);
         defer env.close();
         var txn = try m.Transaction.begin(&env, null, .{ .rdonly = true });
         defer txn.abort();
