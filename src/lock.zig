@@ -30,6 +30,7 @@ pub const LockManager = struct {
     /// In exclusive mode, reader-slot methods return early without touching self.table.
     exclusive: bool = false,
     io: std.Io,
+    writer_locked: std.atomic.Value(bool) = .init(false),
 
     /// Returns a no-op LockManager for exclusive mode.
     /// No .lck file is created; all lock/reader operations succeed immediately.
@@ -86,18 +87,26 @@ pub const LockManager = struct {
 
     pub fn lockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
+        if (self.writer_locked.swap(true, .acquire)) return error.Busy;
+        errdefer self.writer_locked.store(false, .release);
         try os.lockFile(self.io, self.file, true, true);
     }
 
     /// Non-blocking write lock attempt. Returns error.Busy if the lock is already held.
     pub fn tryLockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
-        os.lockFile(self.io, self.file, true, false) catch return error.Busy;
+        if (self.writer_locked.swap(true, .acquire)) return error.Busy;
+        errdefer self.writer_locked.store(false, .release);
+        os.lockFile(self.io, self.file, true, false) catch {
+            self.writer_locked.store(false, .release);
+            return error.Busy;
+        };
     }
 
     pub fn unlockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
         try os.unlockFile(self.io, self.file);
+        self.writer_locked.store(false, .release);
     }
 
     // Returns slot index
