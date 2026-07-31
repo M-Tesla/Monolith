@@ -1,0 +1,861 @@
+// Copyright (c) 2026 Marcelo Tesla
+//
+// This software is provided under the MIT License.
+// See the LICENSE file at the root of the project for the full text.
+//
+// SPDX-License-Identifier: MIT
+//! Environment — pure Zig, no C.
+//! Represents an open .monolith database file.
+//! Owns the mmap region, the ping-pong meta pages, and the LockManager.
+
+const std      = @import("std");
+const os_mod   = @import("os/os.zig");
+const lock_mod = @import("lock.zig");
+const meta_mod = @import("meta/meta.zig");
+const page_mod = @import("page/page.zig");
+const region_mod = @import("region.zig");
+const core_types = @import("core/types.zig");
+const consts   = @import("core/consts.zig");
+const types    = @import("types.zig");
+const txn_mod  = @import("txn.zig");
+
+pub const PAGE_SIZE: usize = consts.DATAPAGESIZE;
+
+/// Initial page layout: meta0(0), meta1(1), main_root(2), gc_root(3), region_dir(4).
+const INIT_PAGES: usize = 5;
+
+pub const Environment = struct {
+    file:          std.Io.File,
+    map:           os_mod.MmapRegion,
+    lock:          lock_mod.LockManager,
+    allocator:     std.mem.Allocator,
+    max_dbs:       u32,
+    rdonly:        bool,
+    /// Index of the meta slot with the most recent committed state (0 or 1).
+    best_meta_idx: u8,
+    /// Optional callback invoked before growing the mmap.
+    /// Receives the environment and the minimum new size needed.
+    /// Returns the actual new size to use, or an error to abort the commit.
+    /// When null the minimum required size is used directly.
+    map_full_fn: ?*const fn (*Environment, usize) anyerror!usize,
+    /// Arbitrary user pointer attached to the environment.
+    user_ctx: ?*anyopaque,
+    /// Handle-Slow-Reader callback: called when a lagging reader is blocking GC.
+    /// Receives the environment, the laggard txnid, the number of txnids it is
+    /// behind the latest committed txnid, and the optional user context.
+    /// Can be used to log, alert, or forcibly close the laggard.
+    hsr_fn:  ?*const fn (env: *Environment, laggard_txnid: u64, gap: u64, ctx: ?*anyopaque) void,
+    /// Optional user context passed to hsr_fn.
+    hsr_ctx: ?*anyopaque,
+    /// Region directory (page 4).  Null for legacy v3 files.
+    region_dir: ?*region_mod.RegionDirectory,
+    /// True when opened with the writemap flag: dirty pages are written
+    /// directly into the mmap instead of heap-allocated buffers.
+    writemap: bool,
+    /// Skip map.sync() on commit (safe_nosync or nosync mode).
+    skip_sync: bool,
+    /// GC reclaims newest-freed pages first (LIFO) instead of oldest (FIFO).
+    liforeclaim: bool,
+    /// Exclusive mode: no lock file created; single-process/single-thread only.
+    exclusive: bool,
+    /// Merge reclaimable GC entries into the current txn's entry (default ON).
+    coalesce: bool,
+    /// Null-terminated path the environment was opened with (heap-allocated).
+    path: [:0]u8,
+    /// Flags the environment was opened with (for getFlags()).
+    open_flags: types.EnvFlags,
+    // ─── Geometry ───────────────────────────────────────────────────────────
+    /// Maximum map size in bytes (0 = unlimited).
+    size_upper: usize,
+    /// Grow in multiples of this many bytes (0 = minimum needed).
+    growth_step: usize,
+    /// Shrink file when free space exceeds this many bytes (0 = never).
+    shrink_threshold: usize,
+    // ─── DBI registry ────────────────────────────────────────────────────────
+    /// Env-level name→slot mapping so DBI handles are stable across transactions.
+    /// Keys are heap-allocated; freed in close().
+    dbi_registry: std.StringHashMapUnmanaged(u32),
+    /// Slots freed by closeDBI() — recycled before allocating dbi_next.
+    dbi_free_slots: std.ArrayListUnmanaged(u32),
+    /// Next DBI slot number to assign when free_slots is empty (starts at 1).
+    dbi_next: u32,
+    /// Free list of PAGE_SIZE dirty-page buffers (see allocPageBuf/freePageBuf).
+    page_pool: std.ArrayListUnmanaged([]u8),
+    /// Free list of max_dbs-sized DbiState buffers (see allocDbiStateBuf).
+    dbi_state_pool: std.ArrayListUnmanaged(txn_mod.DbiStateBuf),
+
+    // ─── Lifecycle ───────────────────────────────────────────────────────────
+
+    /// Opens (or creates) a .monolith database file.
+    pub fn open(
+        path:     [:0]const u8,
+        flags:    types.EnvFlags,
+        max_dbs:  u32,
+        map_size: usize,
+    ) !Environment {
+        return openWithAllocator(path, flags, max_dbs, map_size, std.heap.page_allocator);
+    }
+
+    pub fn openWithAllocator(
+        path:      [:0]const u8,
+        flags:     types.EnvFlags,
+        max_dbs:   u32,
+        map_size:  usize,
+        allocator: std.mem.Allocator,
+    ) !Environment {
+        const rdonly     = flags.rdonly;
+        const path_slice = path[0..path.len];
+
+        // Normalise to native separator so Windows APIs accept forward slashes.
+        var norm_buf: [std.Io.Dir.max_path_bytes:0]u8 = undefined;
+        @memcpy(norm_buf[0..path_slice.len], path_slice);
+        norm_buf[path_slice.len] = 0;
+        if (std.Io.Dir.path.sep != '/') {
+            for (norm_buf[0..path_slice.len]) |*c| {
+                if (c.* == '/') c.* = std.Io.Dir.path.sep;
+            }
+        }
+        const norm_slice = norm_buf[0..path_slice.len];
+
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const file: std.Io.File = blk: {
+            if (std.Io.Dir.path.isAbsolute(norm_slice)) {
+                if (rdonly) {
+                    break :blk try std.Io.Dir.openFileAbsolute(io, norm_slice, .{ .mode = .read_only });
+                } else {
+                    break :blk try std.Io.Dir.createFileAbsolute(io, norm_slice, .{
+                        .read      = true,
+                        .truncate  = false,
+                        .exclusive = false,
+                    });
+                }
+            } else {
+                if (rdonly) {
+                    break :blk try std.Io.Dir.cwd().openFile(io, norm_slice, .{ .mode = .read_only });
+                } else {
+                    break :blk try std.Io.Dir.cwd().createFile(io, norm_slice, .{
+                        .read      = true,
+                        .truncate  = false,
+                        .exclusive = false,
+                    });
+                }
+            }
+        };
+        errdefer file.close(io);
+
+        const file_size = try file.length(io);
+        const is_new    = file_size < PAGE_SIZE * INIT_PAGES;
+
+        if (!rdonly and is_new) {
+            try file.setLength(io, PAGE_SIZE * INIT_PAGES);
+        }
+
+        const mmap_size = if (is_new) PAGE_SIZE * INIT_PAGES else file_size;
+
+        var map = try os_mod.MmapRegion.init(file, mmap_size, rdonly);
+        errdefer map.deinit();
+
+        var lock = if (flags.exclusive)
+            lock_mod.LockManager.initExclusive()
+        else if (flags.server)
+            try lock_mod.LockManager.initServerMode(allocator)
+        else
+            try lock_mod.LockManager.init(path_slice, allocator);
+        errdefer lock.deinit();
+
+        const path_heap = try allocator.dupeZ(u8, path_slice);
+        errdefer allocator.free(path_heap);
+
+        var env = Environment{
+            .file          = file,
+            .map           = map,
+            .lock          = lock,
+            .allocator     = allocator,
+            .max_dbs       = max_dbs,
+            .rdonly        = rdonly,
+            .best_meta_idx = 0,
+            .region_dir    = null,
+            .map_full_fn   = null,
+            .user_ctx      = null,
+            .hsr_fn        = null,
+            .hsr_ctx       = null,
+            .writemap      = flags.writemap,
+            .skip_sync     = flags.safe_nosync or flags.nosync,
+            .liforeclaim   = flags.liforeclaim,
+            .exclusive     = flags.exclusive,
+            .coalesce      = flags.coalesce,
+            .size_upper    = 0,
+            .growth_step   = 0,
+            .shrink_threshold = 0,
+            .dbi_registry  = .{},
+            .dbi_free_slots = .empty,
+            .dbi_next      = 1,
+            .page_pool     = .empty,
+            .dbi_state_pool = .empty,
+            .path          = path_heap,
+            .open_flags    = flags,
+        };
+        // Pre-allocate free-slot list so closeDBI/openDbi appends never OOM.
+        try env.dbi_free_slots.ensureTotalCapacity(env.allocator, max_dbs);
+
+        if (is_new) {
+            try env.initNewDB(map_size);
+        } else {
+            try env.openExisting();
+        }
+
+        return env;
+    }
+
+    /// Flushes and closes the environment, releasing all resources.
+    pub fn close(self: *Environment) void {
+        if (!self.rdonly) self.map.sync() catch {}; // best-effort flush on close
+        self.map.deinit();
+        self.lock.deinit();
+        self.file.close(std.Io.Threaded.global_single_threaded.io());
+        // Free DBI registry keys.
+        var it = self.dbi_registry.keyIterator();
+        while (it.next()) |key| self.allocator.free(key.*);
+        self.dbi_registry.deinit(self.allocator);
+        self.dbi_free_slots.deinit(self.allocator);
+        for (self.page_pool.items) |buf| self.allocator.free(buf);
+        self.page_pool.deinit(self.allocator);
+        for (self.dbi_state_pool.items) |buf| self.allocator.free(buf);
+        self.dbi_state_pool.deinit(self.allocator);
+        self.allocator.free(self.path);
+    }
+
+    // ─── Page buffer pool ────────────────────────────────────────────────────
+    // Dirty-page buffers are PAGE_SIZE and txn-scoped. Routing them through a
+    // small env-level free list removes one malloc+free pair per dirty page
+    // per commit (measured ~2.8 µs per free with a raw allocator).
+    // Single-writer per env means no locking is required here.
+
+    /// Max retained buffers (~16 MiB at 4 KiB pages).
+    const PAGE_POOL_CAP: usize = 4096;
+    /// Max retained dbi_state buffers (~20 MiB at 1024 slots × ~320 B).
+    const DBI_STATE_POOL_CAP: usize = 64;
+
+    pub fn allocPageBuf(self: *Environment) ![]u8 {
+        if (self.page_pool.items.len > 0) return self.page_pool.pop().?;
+        return self.allocator.alloc(u8, PAGE_SIZE);
+    }
+
+    pub fn freePageBuf(self: *Environment, buf: []u8) void {
+        std.debug.assert(buf.len == PAGE_SIZE);
+        if (self.page_pool.items.len >= PAGE_POOL_CAP) {
+            self.allocator.free(buf);
+            return;
+        }
+        self.page_pool.append(self.allocator, buf) catch self.allocator.free(buf);
+    }
+
+    // ─── dbi_state buffer pool ───────────────────────────────────────────────
+    // Every transaction allocates a max_dbs-sized DbiState array (~320 KB at
+    // the default of 1024 DBIs) and frees it at cleanup — a mmap+munmap pair
+    // per commit (~3–6 µs). Pooling the buffers removes both.
+
+    const DbiStateBuf = txn_mod.DbiStateBuf;
+
+    pub fn allocDbiStateBuf(self: *Environment) !DbiStateBuf {
+        if (self.dbi_state_pool.items.len > 0) return self.dbi_state_pool.pop().?;
+        return self.allocator.alloc(txn_mod.DbiState, self.max_dbs);
+    }
+
+    pub fn freeDbiStateBuf(self: *Environment, buf: DbiStateBuf) void {
+        if (buf.len != self.max_dbs or self.dbi_state_pool.items.len >= DBI_STATE_POOL_CAP) {
+            self.allocator.free(buf);
+            return;
+        }
+        self.dbi_state_pool.append(self.allocator, buf) catch self.allocator.free(buf);
+    }
+
+    /// Pointer to the RegionDirectory in page 4 (if present).
+    pub fn getRegionDirPtr(self: *const Environment) ?*region_mod.RegionDirectory {
+        const best = self.bestMeta();
+        if (!best.hasRegions()) return null;
+        return @as(*region_mod.RegionDirectory, @ptrCast(@alignCast(self.map.ptr + PAGE_SIZE * 4 + 24)));
+    }
+
+    // ─── Meta access ─────────────────────────────────────────────────────────
+
+    /// Pointer to the Meta struct in page slot `idx` (0 or 1).
+    /// Meta starts at offset 20, immediately after the 20-byte PageHeader.
+    pub fn getMetaAt(self: *const Environment, idx: u8) *align(4) meta_mod.Meta {
+        const offset = @as(usize, idx) * PAGE_SIZE + 20;
+        return @as(*align(4) meta_mod.Meta, @ptrCast(@alignCast(self.map.ptr + offset)));
+    }
+
+    /// Pointer to the most-recently-committed Meta slot.
+    pub fn bestMeta(self: *const Environment) *align(4) meta_mod.Meta {
+        return self.getMetaAt(self.best_meta_idx);
+    }
+
+    // ─── Page access ─────────────────────────────────────────────────────────
+
+    /// Raw pointer to the PageHeader of page `pgno` in the mmap.
+    /// Callers must ensure pgno is within the committed range (< first_unallocated).
+    pub fn getPagePtr(self: *const Environment, pgno: u32) *page_mod.PageHeader {
+        const offset = @as(usize, pgno) * PAGE_SIZE;
+        std.debug.assert(offset + PAGE_SIZE <= self.map.len); // catches out-of-range pgno in debug
+        return @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + offset)));
+    }
+
+    /// Bounds-checked variant. Returns error.InvalidPage if pgno is out of range.
+    pub fn getPagePtrSafe(self: *const Environment, pgno: u32) !*page_mod.PageHeader {
+        const offset = @as(usize, pgno) * PAGE_SIZE;
+        if (offset + PAGE_SIZE > self.map.len) return error.InvalidPage;
+        return @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + offset)));
+    }
+
+    /// Re-maps the mmap to the current on-disk file size if another process
+    /// has grown the file beyond our current mapping.
+    /// For write transactions: call after acquiring the write lock.
+    /// For read transactions: call before registering the reader slot.
+    pub fn syncMapToFile(self: *Environment) !void {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const file_size = try self.file.length(io);
+        if (file_size <= self.map.len) return;
+        const new_map = try os_mod.MmapRegion.init(self.file, file_size, self.rdonly);
+        self.map.deinit();
+        self.map = new_map;
+    }
+
+    // ─── Resize ──────────────────────────────────────────────────────────────
+
+    /// Extends the backing file and remaps the mmap region.
+    /// Respects growth_step (snaps up to next multiple) and size_upper (hard cap).
+    /// WARNING: invalidates all pointers previously obtained from the mmap.
+    pub fn resize(self: *Environment, new_size: usize) !void {
+        var actual = new_size;
+        // Snap up to the next multiple of growth_step.
+        if (self.growth_step > 0) {
+            const rem = actual % self.growth_step;
+            if (rem != 0) actual += self.growth_step - rem;
+        }
+        // Enforce the upper size limit.
+        if (self.size_upper > 0) {
+            if (new_size > self.size_upper) return error.MapFull;
+            if (actual > self.size_upper) actual = self.size_upper;
+        }
+        const io = std.Io.Threaded.global_single_threaded.io();
+        try self.file.setLength(io, actual);
+        const new_map = try os_mod.MmapRegion.init(self.file, actual, self.rdonly);
+        self.map.deinit();
+        self.map = new_map;
+    }
+
+    // ─── Internal ────────────────────────────────────────────────────────────
+
+    fn initNewDB(self: *Environment, map_size: usize) !void {
+        const total = PAGE_SIZE * INIT_PAGES;
+        @memset(self.map.ptr[0..total], 0);
+
+        const geo_upper: u32 = @truncate(map_size / PAGE_SIZE);
+
+        // Page 0 — Meta slot A
+        {
+            const ph = @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr)));
+            ph.flags        = page_mod.P_META;
+            ph.pgno         = 0;
+            ph.txnid        = 0;
+            ph.dupfix_ksize = 0;
+            ph.setLowerUpper(20, @as(u16, @truncate(PAGE_SIZE)));
+
+            const m = self.getMetaAt(0);
+            m.magic_and_version = consts.MAGIC;
+            m.txnid_a        = 1;
+            m.txnid_b        = 1;
+            m.version        = consts.VERSION;
+            m.validator_id   = 0;
+            m.extra_pagehdr  = 0;
+            m.geometry = .{
+                .grow_pv           = 0,
+                .shrink_pv         = 0,
+                .lower             = INIT_PAGES,
+                .upper             = geo_upper,
+                .current           = INIT_PAGES,
+                .first_unallocated = INIT_PAGES,
+            };
+            m.trees = .{
+                .main = .{
+                    .flags        = 0,
+                    .height       = 1,
+                    .dupfix_size  = 0,
+                    .root         = 2,
+                    .branch_pages = 0,
+                    .leaf_pages   = 1,
+                    .large_pages  = 0,
+                    .sequence     = 0,
+                    .items        = 0,
+                    .mod_txnid    = 1,
+                },
+                .gc = .{
+                    .flags        = 0,
+                    .height       = 1,
+                    .dupfix_size  = 0,
+                    .root         = 3,
+                    .branch_pages = 0,
+                    .leaf_pages   = 1,
+                    .large_pages  = 0,
+                    .sequence     = 0,
+                    .items        = 0,
+                    .mod_txnid    = 1,
+                },
+            };
+            m.canary        = .{ .x = 0, .y = 0, .z = 0, .v = 0 };
+            m.sign          = 0;
+            m.pages_retired = .{ 0, 0 };
+            m.bootid        = .{ .lo = 0, .hi = 0 };
+            m.dxbid         = .{ .lo = 0, .hi = 0 };
+        }
+
+        // Page 1 — Meta slot B (exact copy of A)
+        {
+            const ph = @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + PAGE_SIZE)));
+            ph.flags        = page_mod.P_META;
+            ph.pgno         = 1;
+            ph.txnid        = 0;
+            ph.dupfix_ksize = 0;
+            ph.setLowerUpper(20, @as(u16, @truncate(PAGE_SIZE)));
+
+            const m1 = self.getMetaAt(1);
+            m1.* = self.getMetaAt(0).*;
+        }
+
+        // Page 2 — main tree root (empty leaf)
+        {
+            const p = @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + PAGE_SIZE * 2)));
+            p.init(@as(u32, @truncate(PAGE_SIZE)), page_mod.P_LEAF);
+            p.pgno  = 2;
+            p.txnid = 0;
+            p.dupfix_ksize = page_mod.computePageChecksum(p, PAGE_SIZE);
+        }
+
+        // Page 3 — GC tree root (empty leaf)
+        {
+            const p = @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + PAGE_SIZE * 3)));
+            p.init(@as(u32, @truncate(PAGE_SIZE)), page_mod.P_LEAF);
+            p.pgno  = 3;
+            p.txnid = 0;
+            p.dupfix_ksize = page_mod.computePageChecksum(p, PAGE_SIZE);
+        }
+
+        // Page 4 — Region Directory
+        {
+            const p = @as(*page_mod.PageHeader, @ptrCast(@alignCast(self.map.ptr + PAGE_SIZE * 4)));
+            p.init(@as(u32, @truncate(PAGE_SIZE)), page_mod.P_LEAF);
+            p.pgno  = 4;
+            p.txnid = 0;
+
+            const rd = @as(*region_mod.RegionDirectory, @ptrCast(@alignCast(self.map.ptr + PAGE_SIZE * 4 + 24)));
+            rd.initHybrid(@as(u64, PAGE_SIZE) * INIT_PAGES);
+
+            p.dupfix_ksize = page_mod.computePageChecksum(p, PAGE_SIZE);
+        }
+
+        try self.map.sync();
+        self.best_meta_idx = 0;
+    }
+
+    // ─── MmapFull callback ───────────────────────────────────────────────────
+
+    /// Registers a callback that is invoked when the mmap needs to grow.
+    /// The callback may return a size larger than `needed` to over-allocate,
+    /// or return an error to abort the in-progress commit.
+    pub fn setMapFullHandler(
+        self:   *Environment,
+        fn_ptr: *const fn (*Environment, usize) anyerror!usize,
+    ) void {
+        self.map_full_fn = fn_ptr;
+    }
+
+    // ─── Auto-shrink ─────────────────────────────────────────────────────────
+
+    /// Truncates trailing over-allocated space when it exceeds shrink_threshold.
+    /// Called after each commit. Best-effort: silently skips on remap failure.
+    ///
+    /// Note: growth_step controls GROW granularity; for shrinking we use
+    /// live_size directly so that a large growth_step does not prevent truncation.
+    pub fn tryAutoShrink(self: *Environment, live_pages: u32) void {
+        if (self.shrink_threshold == 0) return;
+        const min_size = PAGE_SIZE * INIT_PAGES; // always keep at least 4 pages
+        const live_size = @max(@as(usize, live_pages) * PAGE_SIZE, min_size);
+        if (self.map.len <= live_size) return;
+        if (self.map.len - live_size <= self.shrink_threshold) return;
+        const new_size = live_size;
+        if (new_size >= self.map.len) return;
+        const old_len = self.map.len;
+        if (comptime @import("builtin").os.tag == .windows) {
+            // Windows: cannot truncate a file while a view is mapped.
+            // Must unmap first, then truncate, then remap.
+            var old_map = self.map;
+            old_map.deinit();
+            const io2 = std.Io.Threaded.global_single_threaded.io();
+            self.file.setLength(io2, new_size) catch {
+                // Truncate failed — remap at original size.
+                self.map = os_mod.MmapRegion.init(self.file, old_len, self.rdonly) catch return;
+                return;
+            };
+            self.map = os_mod.MmapRegion.init(self.file, new_size, self.rdonly) catch {
+                // Remap failed — restore file size, remap at old size (best effort).
+                self.file.setLength(io2, old_len) catch {};
+                self.map = os_mod.MmapRegion.init(self.file, old_len, self.rdonly) catch return;
+                return;
+            };
+        } else {
+            // POSIX: can truncate while the old mmap is alive.
+            // Try-then-swap: keep old map valid until new one is ready.
+            const io3 = std.Io.Threaded.global_single_threaded.io();
+            self.file.setLength(io3, new_size) catch return; // truncate failed — keep old map
+            const new_map = os_mod.MmapRegion.init(self.file, new_size, self.rdonly) catch {
+                // Remap failed. Restore file size so the old map remains consistent.
+                self.file.setLength(io3, old_len) catch {};
+                return;
+            };
+            // Success: release the old mapping.
+            self.map.deinit();
+            self.map = new_map;
+        }
+    }
+
+    // ─── Sync ────────────────────────────────────────────────────────────────
+
+    /// Explicitly flush all pending writes to disk.
+    /// Useful when operating in safe_nosync or nosync mode to durably
+    /// persist a batch of committed transactions at a chosen point.
+    pub fn sync(self: *Environment) void {
+        self.map.sync() catch {}; // public API stays void; errors are best-effort
+    }
+
+    // ─── Geometry ────────────────────────────────────────────────────────────
+
+    /// Configure mmap growth behaviour. Fields set to 0 are unchanged.
+    pub fn setGeometry(self: *Environment, geo: types.Geometry) void {
+        if (geo.size_upper > 0)       self.size_upper       = geo.size_upper;
+        if (geo.growth_step > 0)      self.growth_step      = geo.growth_step;
+        if (geo.shrink_threshold > 0) self.shrink_threshold = geo.shrink_threshold;
+    }
+
+    // ─── DBI lifecycle ───────────────────────────────────────────────────────
+
+    /// Releases the DBI handle, freeing its slot for reuse.
+    /// Any transaction that already holds this handle remains valid until it ends.
+    /// Passing the stale handle to a NEW transaction returns error.BadDbi.
+    pub fn closeDBI(self: *Environment, dbi: types.Dbi) void {
+        var it = self.dbi_registry.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.* == dbi) {
+                const key = entry.key_ptr.*;
+                _ = self.dbi_registry.remove(key);
+                self.allocator.free(key);
+                self.dbi_free_slots.append(self.allocator, dbi) catch {};
+                return;
+            }
+        }
+    }
+
+    // ─── Hot Backup ───────────────────────────────────────────────────────────
+
+    /// Copies the database to `dest_path` (hot backup, O(1) snapshot).
+    // ─── User context ───────────────────────────────────────────────────────────
+
+    pub fn setUserCtx(self: *Environment, ptr: ?*anyopaque) void {
+        self.user_ctx = ptr;
+    }
+
+    pub fn getUserCtx(self: *const Environment) ?*anyopaque {
+        return self.user_ctx;
+    }
+
+    /// Sets the Handle-Slow-Reader callback.
+    /// Called by the GC loader when a lagging reader prevents page reclaim.
+    /// Pass `null` to clear.  `ctx` is forwarded to every invocation.
+    pub fn setHsr(
+        self: *Environment,
+        hsr:  ?*const fn (env: *Environment, laggard_txnid: u64, gap: u64, ctx: ?*anyopaque) void,
+        ctx:  ?*anyopaque,
+    ) void {
+        self.hsr_fn  = hsr;
+        self.hsr_ctx = ctx;
+    }
+
+    // ─── Introspection ───────────────────────────────────────────────────────
+
+    /// Returns the null-terminated path the environment was opened with.
+    pub fn getPath(self: *const Environment) [:0]const u8 {
+        return self.path;
+    }
+
+    /// Returns the flags the environment was opened with.
+    pub fn getFlags(self: *const Environment) types.EnvFlags {
+        return self.open_flags;
+    }
+
+    /// Deletes the environment data file and its lock file (best-effort, static utility).
+    /// Call only after the environment is closed.
+    pub fn deleteFiles(path: [:0]const u8) void {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const slice = path[0..path.len];
+        std.Io.Dir.cwd().deleteFile(io, slice) catch {};
+        var lck_buf: [4096]u8 = undefined;
+        const lck = std.fmt.bufPrint(&lck_buf, "{s}-lck", .{slice}) catch return;
+        std.Io.Dir.cwd().deleteFile(io, lck) catch {};
+    }
+
+    // ─── Reader management ────────────────────────────────────────────────────
+
+    /// Calls `callback` once for each currently active reader slot.
+    pub fn readerList(
+        self:     *const Environment,
+        callback: *const fn (info: types.ReaderInfo, ctx: ?*anyopaque) void,
+        ctx:      ?*anyopaque,
+    ) void {
+        if (self.exclusive) return;
+        const table = self.lock.table;
+        var i: u32 = 0;
+        while (i < table.num_slots) : (i += 1) {
+            const slot  = &table.slots[i];
+            const txnid = @atomicLoad(u64, &slot.txnid, .acquire);
+            if (txnid != 0) {
+                callback(.{
+                    .slot_idx = i,
+                    .pid      = slot.pid,
+                    .tid      = slot.tid,
+                    .txnid    = txnid,
+                }, ctx);
+            }
+        }
+    }
+
+    /// Clears reader slots belonging to dead processes. Returns how many were cleared.
+    pub fn readerCheck(self: *Environment) u32 {
+        return self.lock.recoverDeadSlotsCount();
+    }
+
+    // ─── Backup ───────────────────────────────────────────────────────────────
+
+    /// Briefly holds the writer lock to obtain a consistent page count, then
+    /// streams exactly `first_unallocated` pages to the destination file.
+    /// Active readers are never blocked.
+    pub fn copy(self: *Environment, dest_path: [:0]const u8) !void {
+        // Snapshot the page count under the writer lock for consistency.
+        try self.lock.lockWriter();
+        const num_pages = self.bestMeta().geometry.first_unallocated;
+        try self.lock.unlockWriter();
+
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const dest = try std.Io.Dir.cwd().createFile(io, dest_path[0..dest_path.len], .{ .truncate = true });
+        defer dest.close(io);
+
+        const copy_len = @as(usize, num_pages) * PAGE_SIZE;
+        try std.Io.File.writePositionalAll(dest, io, self.map.ptr[0..copy_len], 0);
+    }
+
+    // ─── Replication ─────────────────────────────────────────────────────────
+
+    /// A replicated page received from the Raft leader.
+    pub const ReplicatedPage = struct {
+        pgno: u32,
+        /// Exactly PAGE_SIZE bytes of raw page data.
+        data: []const u8,
+    };
+
+    /// Apply a set of pages replicated from the Raft leader to this follower's
+    /// environment.  Called by the Raft apply loop after a log entry is committed.
+    ///
+    /// `pages` — the B-tree pages from CommitInfo (pgno + PAGE_SIZE bytes each).
+    /// `meta`  — PAGE_SIZE bytes: the leader's serialised meta for the next slot.
+    pub fn applyReplicatedCommit(
+        self:  *Environment,
+        pages: []const ReplicatedPage,
+        meta:  []const u8,
+    ) !void {
+        try self.lock.lockWriter();
+        defer self.lock.unlockWriter() catch {};
+
+        // Validate that the supplied meta looks like a completed commit.
+        if (meta.len >= PAGE_SIZE) {
+            const meta_hdr = @as(*page_mod.PageHeader, @ptrCast(@alignCast(@constCast(meta.ptr))));
+            const meta_ptr = @as(*meta_mod.Meta, @ptrCast(@alignCast(@constCast(meta.ptr + 20))));
+            if (meta_hdr.flags & page_mod.P_META == 0 or meta_ptr.txnid_a != meta_ptr.txnid_b)
+                return error.Corrupted;
+        }
+
+        // Write every data page to the mmap, resizing if necessary.
+        for (pages) |p| {
+            const offset = @as(usize, p.pgno) * PAGE_SIZE;
+            if (offset + PAGE_SIZE > self.map.len) {
+                const needed = offset + PAGE_SIZE;
+                const new_size = if (self.map_full_fn) |fn_ptr|
+                    try fn_ptr(self, needed)
+                else
+                    needed;
+                try self.resize(new_size);
+            }
+            @memcpy(self.map.ptr[offset .. offset + PAGE_SIZE], p.data[0..PAGE_SIZE]);
+        }
+
+        // Write the leader's meta into the next ping-pong slot.
+        const next_slot: u8 = 1 - self.best_meta_idx;
+        const meta_offset = @as(usize, next_slot) * PAGE_SIZE;
+        if (meta_offset + PAGE_SIZE <= self.map.len and meta.len >= PAGE_SIZE) {
+            @memcpy(self.map.ptr[meta_offset .. meta_offset + PAGE_SIZE], meta[0..PAGE_SIZE]);
+        }
+
+        try self.map.sync();
+        self.best_meta_idx = next_slot;
+    }
+
+    // ─── Deep Audit ──────────────────────────────────────────────────────────
+
+    /// Result of a structural integrity check of the database file.
+    pub const CheckResult = struct {
+        /// Number of data pages examined (excludes meta pages 0 and 1)
+        pages_visited: u64,
+        /// Number of structural errors detected
+        errors:        u64,
+    };
+
+    /// Performs a structural integrity check on all allocated pages.
+    /// Validates that each page's stored pgno matches its physical offset
+    /// and that its flags contain only recognised bit combinations.
+    /// Returns a CheckResult with counts; does not modify any data.
+    pub fn check(self: *const Environment) CheckResult {
+        const meta        = self.bestMeta();
+        const total: u32  = meta.geometry.first_unallocated;
+        var result = CheckResult{ .pages_visited = 0, .errors = 0 };
+
+        // Pages 0 and 1 are meta pages — start audit from page 2.
+        var i: u32 = 2;
+        while (i < total) {
+            result.pages_visited += 1;
+            const pg = self.getPagePtr(i);
+
+            // The pgno field must match the page's physical position.
+            if (pg.pgno != i) result.errors += 1;
+
+            // Validate checksum for pages that carry one (non-LEAF2, non-META).
+            const skip_cksum = (pg.flags & page_mod.P_LEAF2) != 0 or
+                               (pg.flags & page_mod.P_META)  != 0;
+            if (!skip_cksum) {
+                const expected = page_mod.computePageChecksum(pg, consts.DATAPAGESIZE);
+                if (pg.dupfix_ksize != expected) result.errors += 1;
+            }
+
+            // Flags must consist only of recognised page-type bits.
+            const known: u16 = page_mod.P_BRANCH | page_mod.P_LEAF |
+                               page_mod.P_OVERFLOW | page_mod.P_META |
+                               page_mod.P_DIRTY | page_mod.P_LEAF2 |
+                               page_mod.P_SUBP | page_mod.P_LOOSE | page_mod.P_KEEP;
+            if (pg.flags & ~known != 0) result.errors += 1;
+
+            // A page must have exactly one primary type flag set.
+            const type_bits: u16 = pg.flags & (page_mod.P_BRANCH | page_mod.P_LEAF |
+                                               page_mod.P_OVERFLOW | page_mod.P_META |
+                                               page_mod.P_LEAF2);
+            const is_power_of_two = type_bits != 0 and (type_bits & (type_bits - 1)) == 0;
+            if (!is_power_of_two) result.errors += 1;
+
+            if ((pg.flags & page_mod.P_OVERFLOW) != 0) {
+                // For the first page of an overflow run: validate the page count
+                // and skip subsequent pages of the same run in one step.
+                const n_pages = pg.data_union; // stored in first overflow page
+                if (n_pages == 0 or @as(u64, i) + n_pages > total) {
+                    result.errors += 1;
+                    i += 1;
+                } else {
+                    // Validate all pages in the run share the P_OVERFLOW flag.
+                    var j: u32 = 1;
+                    while (j < n_pages) : (j += 1) {
+                        const opg = self.getPagePtr(i + j);
+                        result.pages_visited += 1;
+                        if (opg.pgno != i + j) result.errors += 1;
+                        if ((opg.flags & page_mod.P_OVERFLOW) == 0) result.errors += 1;
+                    }
+                    i += n_pages;
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        return result;
+    }
+
+    fn openExisting(self: *Environment) !void {
+        const m0 = self.getMetaAt(0);
+        const m1 = self.getMetaAt(1);
+
+        const v0 = m0.validate();
+        const v1 = m1.validate();
+
+        if (!v0 and !v1) return error.Invalid;
+
+        if (v0 and v1) {
+            const ok0 = m0.txnid_a == m0.txnid_b;
+            const ok1 = m1.txnid_a == m1.txnid_b;
+            if (ok0 and ok1) {
+                self.best_meta_idx = if (m0.txnid_a >= m1.txnid_a) 0 else 1;
+            } else if (ok0) {
+                self.best_meta_idx = 0;
+            } else if (ok1) {
+                self.best_meta_idx = 1;
+            } else {
+                return error.Corrupted;
+            }
+        } else {
+            self.best_meta_idx = if (v0) 0 else 1;
+        }
+
+        // Validate checksums of the root pages (2 and 3) for the chosen meta.
+        const best = self.bestMeta();
+        const main_root = self.getPagePtr(best.trees.main.root);
+        const gc_root = self.getPagePtr(best.trees.gc.root);
+        if (!page_mod.validatePageChecksum(main_root, PAGE_SIZE)) return error.Corrupted;
+        if (!page_mod.validatePageChecksum(gc_root, PAGE_SIZE)) return error.Corrupted;
+
+        // If this is a v4+ file, validate the region directory page (4).
+        if (best.hasRegions()) {
+            const rd = self.getRegionDirPtr().?;
+            if (!rd.validate()) return error.Corrupted;
+        }
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+test "Environment: open/close new database" {
+    const path = "test_env_open.monolith";
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path ++ "-lck") catch {};
+
+    var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+    defer env.close();
+
+    const m = env.bestMeta();
+    try std.testing.expect(m.validate());
+    try std.testing.expectEqual(@as(u64, 1), m.txnid_a);
+    try std.testing.expectEqual(@as(u32, 2), m.trees.main.root);
+    try std.testing.expectEqual(@as(u32, 3), m.trees.gc.root);
+    try std.testing.expectEqual(@as(u32, INIT_PAGES), m.geometry.first_unallocated);
+}
+
+test "Environment: reopen preserves meta" {
+    const path = "test_env_reopen.monolith";
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path ++ "-lck") catch {};
+
+    {
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        env.close();
+    }
+    {
+        var env = try Environment.open(path, .{}, 4, 4 * 1024 * 1024);
+        defer env.close();
+        const m = env.bestMeta();
+        try std.testing.expect(m.validate());
+        try std.testing.expectEqual(@as(u64, 1), m.txnid_a);
+    }
+}

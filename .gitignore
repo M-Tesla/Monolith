@@ -1,0 +1,7 @@
+.zig-cache/
+zig-out/
+
+# Test database artifacts
+*.monolith
+*.monolith-lck
+test_adv_put_tmp/
