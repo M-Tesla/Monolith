@@ -1,11 +1,12 @@
 .{
     .name = .monolith,
     .fingerprint = 0x44623535083de83a,
-    .version = "0.2.0",
-    .minimum_zig_version = "0.15.2",
+    .version = "0.3.0",
+    .minimum_zig_version = "0.16.0",
     .paths = .{
         "src",
         "build.zig",
         "build.zig.zon",
+        "zig-lz4",
     },
 }
