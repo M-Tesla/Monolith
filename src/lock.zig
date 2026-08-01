@@ -71,7 +71,9 @@ pub const LockManager = struct {
     /// In-process write-lock tracking for non-server mode. flock() on the
     /// same fd always succeeds, so without this a second tryLockWriter()
     /// from the same process would not return error.Busy.
-    writer_held: bool = false,
+    /// Atomic, so concurrent tryLockWriter() callers from different threads
+    /// race safely (pattern adapted from Andrea Maccagno's PR #2).
+    writer_held: std.atomic.Value(bool) = .init(false),
 
     /// Returns a no-op LockManager for exclusive mode.
     /// No .lck file is created; all lock/reader operations succeed immediately.
@@ -161,8 +163,10 @@ pub const LockManager = struct {
     pub fn lockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
         if (self.server) |srv| { srv.write_mutex.lock(); return; }
+        // Blocking path: wait on the kernel lock first, then mark held.
+        // (Never gated by writer_held — a second writer must WAIT, not fail.)
         try os.lockFile(self.file, true, true);
-        self.writer_held = true;
+        self.writer_held.store(true, .release);
     }
 
     /// Non-blocking write lock attempt. Returns error.Busy if the lock is already held.
@@ -172,15 +176,18 @@ pub const LockManager = struct {
             if (!srv.write_mutex.tryLock()) return error.Busy;
             return;
         }
-        if (self.writer_held) return error.Busy;
-        os.lockFile(self.file, true, false) catch return error.Busy;
-        self.writer_held = true;
+        // Atomic in-process gate: flock() cannot see same-process conflicts.
+        if (self.writer_held.swap(true, .acquire)) return error.Busy;
+        os.lockFile(self.file, true, false) catch {
+            self.writer_held.store(false, .release);
+            return error.Busy;
+        };
     }
 
     pub fn unlockWriter(self: *LockManager) !void {
         if (self.exclusive) return;
         if (self.server) |srv| { srv.write_mutex.unlock(); return; }
-        self.writer_held = false;
+        self.writer_held.store(false, .release);
         try os.unlockFile(self.file);
     }
     
